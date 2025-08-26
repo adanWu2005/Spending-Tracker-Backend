@@ -20,6 +20,47 @@ from .tasks import send_verification_email
 
 # Create your views here.
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def api_root(request):
+    """API root endpoint that lists available endpoints"""
+    return Response({
+        'message': 'FinFlow API',
+        'version': '1.0',
+        'endpoints': {
+            'authentication': {
+                'register': '/api/register/',
+                'login': '/api/login/',
+                'verify_email': '/api/verify-email/',
+                'resend_verification': '/api/resend-verification/',
+                'check_user_status': '/api/check-user-status/',
+                'delete_unverified_user': '/api/delete-unverified-user/',
+            },
+            'user': {
+                'profile': '/api/profile/',
+                'consent_status': '/api/consent/status/',
+                'consent_update': '/api/consent/update/',
+            },
+            'plaid': {
+                'create_link_token': '/api/plaid/create-link-token/',
+                'exchange_token': '/api/plaid/exchange-token/',
+                'sync_transactions': '/api/plaid/sync-transactions/',
+            },
+            'data': {
+                'accounts': '/api/accounts/',
+                'categories': '/api/categories/',
+                'transactions': '/api/transactions/',
+                'auto_tag_rules': '/api/auto-tag-rules/',
+                'spending_summary': '/api/spending-summary/',
+            },
+            'security': {
+                'audit': '/api/security/audit/',
+                'status': '/api/security/status/',
+                'attestations': '/api/security/attestations/',
+            }
+        }
+    })
+
 class CreateUser(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = User_Serialzier
@@ -35,6 +76,9 @@ class CreateUser(generics.CreateAPIView):
         
         # Check for consent
         data_consent = request.data.get('data_consent', False)
+        # Convert string to boolean if needed
+        if isinstance(data_consent, str):
+            data_consent = data_consent.lower() == 'true'
         if not data_consent:
             return Response({
                 'error': 'You must consent to data collection and processing to use this application.'
