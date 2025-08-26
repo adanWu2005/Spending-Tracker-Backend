@@ -174,6 +174,17 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
+# Redis SSL Configuration for Heroku
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+if redis_url.startswith('rediss://'):
+    # Add SSL certificate requirements for Heroku Redis
+    redis_url += '?ssl_cert_reqs=none'
+    CELERY_BROKER_URL = redis_url
+    CELERY_RESULT_BACKEND = redis_url
+else:
+    CELERY_BROKER_URL = redis_url
+    CELERY_RESULT_BACKEND = redis_url
+
 # Django URL Configuration
 APPEND_SLASH = True
 
