@@ -136,6 +136,25 @@ class CreateUser(generics.CreateAPIView):
             'email': user.email
         }, status=status.HTTP_201_CREATED)
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def test_email(request):
+    """Test email configuration"""
+    try:
+        from django.core.mail import send_mail
+        from django.conf import settings
+        
+        send_mail(
+            'Test Email from FinFlow',
+            'This is a test email to verify email configuration.',
+            settings.DEFAULT_FROM_EMAIL,
+            [settings.DEFAULT_FROM_EMAIL],
+            fail_silently=False,
+        )
+        return Response({'message': 'Test email sent successfully!'})
+    except Exception as e:
+        return Response({'error': f'Email test failed: {str(e)}'}, status=500)
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def verify_email(request):
