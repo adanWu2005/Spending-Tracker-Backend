@@ -100,12 +100,20 @@ class CreateUser(generics.CreateAPIView):
         # Create user but don't save yet
         user = serializer.save(is_active=False)  # User is inactive until email is verified
         
-        # Create user profile with consent
-        user_profile = UserProfile.objects.create(
+        # Create user profile with consent (use get_or_create to avoid duplicates)
+        user_profile, created = UserProfile.objects.get_or_create(
             user=user,
-            data_consent_given=True,
-            consent_date=timezone.now()
+            defaults={
+                'data_consent_given': True,
+                'consent_date': timezone.now()
+            }
         )
+        
+        # If profile already existed, update consent
+        if not created:
+            user_profile.data_consent_given = True
+            user_profile.consent_date = timezone.now()
+            user_profile.save()
         
         # Create verification code
         verification_code = VerificationCode.objects.create(

@@ -28,8 +28,7 @@ class User_Serialzier(serializers.ModelSerializer):
 
     def create(self, validated_data):
         user = User.objects.create_user(**validated_data)
-        # Create user profile when user is created
-        UserProfile.objects.create(user=user)
+        # Don't create UserProfile here - it will be created in the view
         return user
 
 class UserProfileSerializer(serializers.ModelSerializer):
