@@ -24,9 +24,18 @@ class PlaidService:
         
         print(f"PlaidService: Initializing with client_id: {client_id[:10]}...")
         
+        # Determine Plaid environment based on environment variable
+        plaid_env = os.getenv('PLAID_ENV', 'sandbox')
+        if plaid_env == 'production':
+            host = plaid.Environment.Production
+        elif plaid_env == 'development':
+            host = plaid.Environment.Development
+        else:
+            host = plaid.Environment.Sandbox
+        
         self.client = plaid.ApiClient(
             plaid.Configuration(
-                host=plaid.Environment.production,  # Change to Development or Production
+                host=host,
                 api_key={
                     'clientId': client_id,
                     'secret': secret,
