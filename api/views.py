@@ -672,7 +672,7 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
 def apply_auto_tags(request):
     """Apply auto-tag rules to existing transactions"""
     try:
-        transactions = Transaction.objects.filter(user=request.user, primary_category__isnull=True)
+        transactions = Transaction.objects.filter(user=request.user)
         auto_tag_rules = AutoTagRule.objects.filter(user=request.user, is_active=True).order_by('-priority')
         
         tagged_count = 0
