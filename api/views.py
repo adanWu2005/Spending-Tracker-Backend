@@ -470,53 +470,85 @@ def create_link_token(request):
 def exchange_token(request):
     """Exchange public token for access token and sync accounts"""
     try:
+        print(f"Exchange token called for user: {request.user.id}")
+        print(f"Request data: {request.data}")
+        
         # Check if user has given consent
         try:
             user_profile = UserProfile.objects.get(user=request.user)
             if not user_profile.data_consent_given:
+                print(f"User {request.user.id} has not given consent")
                 return Response({
                     'error': 'You must provide consent for data collection before connecting bank accounts.'
                 }, status=status.HTTP_403_FORBIDDEN)
         except UserProfile.DoesNotExist:
+            print(f"UserProfile does not exist for user {request.user.id}")
             return Response({
                 'error': 'User profile not found. Please complete registration first.'
             }, status=status.HTTP_404_NOT_FOUND)
         
         public_token = request.data.get('public_token')
+        print(f"Public token received: {public_token[:20] if public_token else 'None'}...")
+        
         if not public_token:
+            print("No public token provided")
             return Response({'error': 'public_token is required'}, status=status.HTTP_400_BAD_REQUEST)
 
+        print("Initializing PlaidService...")
         plaid_service = PlaidService()
-        access_token, item_id = plaid_service.exchange_public_token(public_token)
+        
+        print("Exchanging public token...")
+        try:
+            access_token, item_id = plaid_service.exchange_public_token(public_token)
+            print(f"Token exchange successful. Access token: {access_token[:20]}..., Item ID: {item_id}")
+        except Exception as plaid_error:
+            print(f"Plaid token exchange error: {str(plaid_error)}")
+            import traceback
+            traceback.print_exc()
+            return Response({'error': f'Plaid token exchange failed: {str(plaid_error)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Update user profile with Plaid tokens
         user_profile.plaid_access_token = access_token
         user_profile.plaid_item_id = item_id
         user_profile.save()
+        print("User profile updated with Plaid tokens")
 
         # Get and sync accounts
         print(f"Getting accounts for access token: {access_token[:20]}...")
-        accounts = plaid_service.get_accounts(access_token)
-        print(f"Retrieved {len(accounts)} accounts from Plaid")
+        try:
+            accounts = plaid_service.get_accounts(access_token)
+            print(f"Retrieved {len(accounts)} accounts from Plaid")
+        except Exception as accounts_error:
+            print(f"Error getting accounts: {str(accounts_error)}")
+            import traceback
+            traceback.print_exc()
+            return Response({'error': f'Error retrieving accounts: {str(accounts_error)}'}, status=status.HTTP_400_BAD_REQUEST)
         
         for account in accounts:
             print(f"Processing account: {account.name} - {account.account_id}")
-            bank_account, created = BankAccount.objects.update_or_create(
-                plaid_account_id=account.account_id,
-                defaults={
-                    'user': request.user,
-                    'name': account.name,
-                    'type': account.type,
-                    'subtype': account.subtype,
-                    'mask': account.mask,
-                    'institution_name': 'Connected Bank',  # You can get this from institutions API
-                    'balance': account.balances.current
-                }
-            )
-            print(f"Account {'created' if created else 'updated'}: {bank_account.name}")
+            try:
+                bank_account, created = BankAccount.objects.update_or_create(
+                    plaid_account_id=account.account_id,
+                    defaults={
+                        'user': request.user,
+                        'name': account.name,
+                        'type': account.type,
+                        'subtype': account.subtype,
+                        'mask': account.mask,
+                        'institution_name': 'Connected Bank',  # You can get this from institutions API
+                        'balance': account.balances.current
+                    }
+                )
+                print(f"Account {'created' if created else 'updated'}: {bank_account.name}")
+            except Exception as account_error:
+                print(f"Error processing account {account.account_id}: {str(account_error)}")
+                # Continue processing other accounts even if one fails
 
         return Response({'message': 'Bank account connected successfully'})
     except Exception as e:
+        print(f"General error in exchange_token: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
