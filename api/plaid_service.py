@@ -53,7 +53,7 @@ class PlaidService:
         request = LinkTokenCreateRequest(
             products=[Products("transactions")],
             client_name="Spending Tracker",
-            country_codes=[CountryCode("US")],
+            country_codes=[CountryCode("US"), CountryCode("CA")],
             language="en",
             user=LinkTokenCreateRequestUser(
                 client_user_id=str(user_id)
