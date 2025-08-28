@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import UserProfile, BankAccount, SpendingCategory, Transaction, AutoTagRule
+from .models import UserProfile, BankAccount, SpendingCategory, Transaction
 
 class User_Serialzier(serializers.ModelSerializer):
     class Meta:
@@ -67,14 +67,5 @@ class TransactionSerializer(serializers.ModelSerializer):
     def get_account_name(self, obj):
         return obj.account.name
 
-class AutoTagRuleSerializer(serializers.ModelSerializer):
-    category_name = serializers.SerializerMethodField()
 
-    class Meta:
-        model = AutoTagRule
-        fields = '__all__'
-        read_only_fields = ('user', 'created_at')
-
-    def get_category_name(self, obj):
-        return obj.category.name
 

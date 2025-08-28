@@ -12,9 +12,9 @@ from datetime import datetime, timedelta
 import json
 from .serializer import (
     User_Serialzier, UserProfileSerializer, BankAccountSerializer,
-    SpendingCategorySerializer, TransactionSerializer, AutoTagRuleSerializer
+    SpendingCategorySerializer, TransactionSerializer
 )
-from .models import UserProfile, BankAccount, SpendingCategory, Transaction, AutoTagRule, VerificationCode
+from .models import UserProfile, BankAccount, SpendingCategory, Transaction, VerificationCode
 from .plaid_service import PlaidService
 from .tasks import send_verification_email
 
@@ -50,7 +50,6 @@ def api_root(request):
                 'accounts': '/api/accounts/',
                 'categories': '/api/categories/',
                 'transactions': '/api/transactions/',
-                'auto_tag_rules': '/api/auto-tag-rules/',
                 'spending_summary': '/api/spending-summary/',
             },
             'security': {
@@ -422,22 +421,7 @@ class TransactionList(generics.ListAPIView):
             
         return queryset
 
-class AutoTagRuleList(generics.ListCreateAPIView):
-    serializer_class = AutoTagRuleSerializer
-    permission_classes = [IsAuthenticated]
 
-    def get_queryset(self):
-        return AutoTagRule.objects.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
-
-class AutoTagRuleDetail(generics.RetrieveUpdateDestroyAPIView):
-    serializer_class = AutoTagRuleSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return AutoTagRule.objects.filter(user=self.request.user)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -630,12 +614,7 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
         
         category, created = SpendingCategory.objects.get_or_create(name=category_name)
         
-        # Apply auto-tag rules
-        auto_tag_rules = AutoTagRule.objects.filter(user=user, is_active=True).order_by('-priority')
-        for rule in auto_tag_rules:
-            if any(keyword.lower() in plaid_transaction.name.lower() for keyword in rule.keywords):
-                category = rule.category
-                break
+
         
         transaction_data = {
             'user': user,
@@ -667,27 +646,7 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
     except Exception as e:
         print(f"Error processing transaction {plaid_transaction.transaction_id}: {str(e)}")
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def apply_auto_tags(request):
-    """Apply auto-tag rules to existing transactions"""
-    try:
-        transactions = Transaction.objects.filter(user=request.user)
-        auto_tag_rules = AutoTagRule.objects.filter(user=request.user, is_active=True).order_by('-priority')
-        
-        tagged_count = 0
-        for transaction in transactions:
-            for rule in auto_tag_rules:
-                if any(keyword.lower() in transaction.name.lower() for keyword in rule.keywords):
-                    transaction.primary_category = rule.category
-                    transaction.category.add(rule.category)
-                    transaction.save()
-                    tagged_count += 1
-                    break
-        
-        return Response({'message': f'Applied tags to {tagged_count} transactions'})
-    except Exception as e:
-        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

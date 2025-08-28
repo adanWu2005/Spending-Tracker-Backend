@@ -39,10 +39,7 @@ urlpatterns = [
     # Transactions
     path('transactions/', views.TransactionList.as_view(), name='transactions'),
     
-    # Auto Tag Rules
-    path('auto-tag-rules/', views.AutoTagRuleList.as_view(), name='auto-tag-rules'),
-    path('auto-tag-rules/<int:pk>/', views.AutoTagRuleDetail.as_view(), name='auto-tag-rule-detail'),
-    path('auto-tag-rules/apply/', views.apply_auto_tags, name='apply-auto-tags'),
+
     
     # Analytics
     path('spending-summary/', views.spending_summary, name='spending-summary'),

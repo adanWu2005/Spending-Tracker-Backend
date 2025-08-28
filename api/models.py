@@ -69,20 +69,7 @@ class Transaction(models.Model):
     def __str__(self):
         return f"{self.name} - ${self.amount} - {self.date}"
 
-class AutoTagRule(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    name = models.CharField(max_length=100)
-    keywords = models.JSONField()  # List of keywords to match
-    category = models.ForeignKey(SpendingCategory, on_delete=models.CASCADE)
-    priority = models.IntegerField(default=1)  # Higher number = higher priority
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        ordering = ['-priority', 'name']
-
-    def __str__(self):
-        return f"{self.name} -> {self.category.name}"
 
 class VerificationCode(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
