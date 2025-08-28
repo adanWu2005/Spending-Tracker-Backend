@@ -527,6 +527,11 @@ def exchange_token(request):
         for account in accounts:
             print(f"Processing account: {account.name} - {account.account_id}")
             try:
+                # Handle accounts with or without balance information
+                balance = 0.0
+                if hasattr(account, 'balances') and account.balances and hasattr(account.balances, 'current'):
+                    balance = account.balances.current if account.balances.current is not None else 0.0
+                
                 bank_account, created = BankAccount.objects.update_or_create(
                     plaid_account_id=account.account_id,
                     defaults={
@@ -536,7 +541,7 @@ def exchange_token(request):
                         'subtype': account.subtype,
                         'mask': account.mask,
                         'institution_name': 'Connected Bank',  # You can get this from institutions API
-                        'balance': account.balances.current
+                        'balance': balance
                     }
                 )
                 print(f"Account {'created' if created else 'updated'}: {bank_account.name}")
