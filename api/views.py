@@ -492,8 +492,21 @@ def exchange_token(request):
             return Response({'error': f'Plaid token exchange failed: {str(plaid_error)}'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Update user profile with Plaid tokens
+        # Reset the transaction cursor if the item or access token changed to avoid
+        # "cursor not associated with access_token" errors when calling transactions/sync
+        previous_item_id = user_profile.plaid_item_id
+        previous_access_token = user_profile.plaid_access_token
+
         user_profile.plaid_access_token = access_token
         user_profile.plaid_item_id = item_id
+
+        if previous_item_id and previous_item_id != item_id:
+            print("Item changed; resetting stored transaction cursor")
+            user_profile.transaction_cursor = None
+        elif previous_access_token and previous_access_token != access_token:
+            print("Access token changed; resetting stored transaction cursor")
+            user_profile.transaction_cursor = None
+
         user_profile.save()
         print("User profile updated with Plaid tokens")
 
@@ -572,7 +585,19 @@ def sync_transactions(request):
         
         # Sync transactions
         print("Calling Plaid API to sync transactions...")
-        sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, cursor)
+        try:
+            sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, cursor)
+        except Exception as sync_error:
+            # If the stored cursor is invalid for this access token, retry once with no cursor
+            error_text = str(sync_error)
+            if "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
+                print("Stored cursor invalid for access token; retrying sync with no cursor and clearing stored cursor")
+                cursor = None
+                user_profile.transaction_cursor = None
+                user_profile.save()
+                sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, None)
+            else:
+                raise
         print(f"Plaid response received: {len(sync_response.added)} added, {len(sync_response.modified)} modified")
         
         # Process added transactions
