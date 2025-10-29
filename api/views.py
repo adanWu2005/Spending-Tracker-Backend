@@ -371,12 +371,26 @@ class BankAccountList(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        # Default queryset (unused when list is overridden below)
+        return BankAccount.objects.filter(user=self.request.user)
+
+    def list(self, request, *args, **kwargs):
         print(f"Fetching accounts for user: {self.request.user.id}")
-        accounts = BankAccount.objects.filter(user=self.request.user)
-        print(f"Found {accounts.count()} accounts for user {self.request.user.id}")
+        accounts = BankAccount.objects.filter(user=request.user).order_by('-last_updated', '-id')
+        print(f"Found {accounts.count()} raw account rows for user {request.user.id}")
+
+        # Deduplicate by stable presentation key (name + mask + type). Keep most recent.
+        dedup_key_to_account = {}
         for account in accounts:
-            print(f"Account: {account.name} - {account.plaid_account_id}")
-        return accounts
+            dedup_key = f"{account.name}|{account.mask}|{account.type}"
+            if dedup_key not in dedup_key_to_account:
+                dedup_key_to_account[dedup_key] = account
+
+        deduped_accounts = list(dedup_key_to_account.values())
+        print(f"Returning {len(deduped_accounts)} deduplicated accounts for user {request.user.id}")
+
+        serializer = self.get_serializer(deduped_accounts, many=True)
+        return Response(serializer.data)
 
 class SpendingCategoryList(generics.ListCreateAPIView):
     serializer_class = SpendingCategorySerializer
