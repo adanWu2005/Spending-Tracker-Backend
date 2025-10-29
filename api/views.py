@@ -521,6 +521,15 @@ def exchange_token(request):
             traceback.print_exc()
             return Response({'error': f'Error retrieving accounts: {str(accounts_error)}'}, status=status.HTTP_400_BAD_REQUEST)
         
+        # Remove any previously stored accounts for this user so only the latest
+        # linked item/accounts are shown and there are no duplicates from past sessions
+        try:
+            deleted_count, _ = BankAccount.objects.filter(user=request.user).delete()
+            if deleted_count:
+                print(f"Deleted {deleted_count} old bank account records for user {request.user.id}")
+        except Exception as cleanup_error:
+            print(f"Warning: failed to clean up old accounts: {cleanup_error}")
+
         for account in accounts:
             print(f"Processing account: {account.name} - {account.account_id}")
             try:
