@@ -712,6 +712,41 @@ def sync_transactions(request):
             current_cursor = sync_response.next_cursor
         
         print(f"Sync complete: {total_added} total added, {total_modified} total modified, {total_removed} total removed")
+        
+        # Update account balances after syncing transactions
+        print("Updating account balances...")
+        try:
+            accounts = plaid_service.get_accounts(user_profile.plaid_access_token)
+            print(f"Retrieved {len(accounts)} accounts from Plaid for balance update")
+            
+            for account in accounts:
+                try:
+                    # Handle accounts with or without balance information
+                    balance = 0.0
+                    if hasattr(account, 'balances') and account.balances and hasattr(account.balances, 'current'):
+                        balance = account.balances.current if account.balances.current is not None else 0.0
+                    
+                    bank_account, created = BankAccount.objects.update_or_create(
+                        plaid_account_id=account.account_id,
+                        defaults={
+                            'user': request.user,
+                            'name': account.name,
+                            'type': account.type,
+                            'subtype': account.subtype,
+                            'mask': account.mask,
+                            'institution_name': 'Connected Bank',
+                            'balance': balance
+                        }
+                    )
+                    print(f"Account balance updated: {bank_account.name} = ${balance}")
+                except Exception as account_error:
+                    print(f"Error updating account balance for {account.account_id}: {str(account_error)}")
+                    # Continue processing other accounts even if one fails
+        except Exception as balance_error:
+            print(f"Error fetching account balances: {str(balance_error)}")
+            # Don't fail the entire sync if balance update fails
+            import traceback
+            traceback.print_exc()
 
         return Response({
             'added': total_added,
