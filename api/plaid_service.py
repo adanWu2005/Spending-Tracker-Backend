@@ -11,6 +11,7 @@ from plaid.model.transactions_sync_request import TransactionsSyncRequest
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
 from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
+from plaid.exceptions import ApiException as PlaidApiException
 from django.conf import settings
 from datetime import datetime, timedelta
 import json

@@ -611,6 +611,31 @@ def sync_transactions(request):
         try:
             sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, cursor)
         except Exception as sync_error:
+            from plaid.exceptions import ApiException as PlaidApiException
+            
+            # Check if this is a Plaid API exception (expired/invalid token)
+            if isinstance(sync_error, PlaidApiException):
+                error_body = sync_error.body
+                error_code = getattr(error_body, 'error_code', None)
+                
+                # Check for ITEM_LOGIN_REQUIRED - user needs to re-authenticate
+                if error_code == 'ITEM_LOGIN_REQUIRED':
+                    print(f"Plaid access token expired for user {request.user.id}: ITEM_LOGIN_REQUIRED")
+                    return Response({
+                        'error': 'Your bank account connection has expired. Please reconnect your bank account.',
+                        'error_code': 'ITEM_LOGIN_REQUIRED',
+                        'requires_reauth': True
+                    }, status=status.HTTP_401_UNAUTHORIZED)
+                
+                # Check for INVALID_ACCESS_TOKEN
+                if error_code == 'INVALID_ACCESS_TOKEN':
+                    print(f"Plaid access token is invalid for user {request.user.id}")
+                    return Response({
+                        'error': 'Your bank account connection is invalid. Please reconnect your bank account.',
+                        'error_code': 'INVALID_ACCESS_TOKEN',
+                        'requires_reauth': True
+                    }, status=status.HTTP_401_UNAUTHORIZED)
+            
             # If the stored cursor is invalid for this access token, retry once with no cursor
             error_text = str(sync_error)
             if "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
@@ -662,7 +687,11 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
         
         category, created = SpendingCategory.objects.get_or_create(name=category_name)
         
-
+        # Safely get transaction attributes with defaults
+        merchant_name = getattr(plaid_transaction, 'merchant_name', None)
+        payment_channel = getattr(plaid_transaction, 'payment_channel', None)
+        transaction_type = getattr(plaid_transaction, 'transaction_type', None)
+        pending = getattr(plaid_transaction, 'pending', False)
         
         transaction_data = {
             'user': user,
@@ -671,19 +700,24 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
             'amount': plaid_transaction.amount,
             'date': plaid_transaction.date,
             'name': plaid_transaction.name,
-            'merchant_name': plaid_transaction.merchant_name,
+            'merchant_name': merchant_name,
             'primary_category': category,
-            'pending': plaid_transaction.pending,
-            'payment_channel': plaid_transaction.payment_channel,
-            'transaction_type': plaid_transaction.transaction_type
+            'pending': pending,
+            'payment_channel': payment_channel,
+            'transaction_type': transaction_type
         }
         
         if update:
-            # Update existing transaction
-            transaction = Transaction.objects.get(plaid_transaction_id=plaid_transaction.transaction_id)
-            for key, value in transaction_data.items():
-                setattr(transaction, key, value)
-            transaction.save()
+            # Update existing transaction (filter by user for security)
+            try:
+                transaction = Transaction.objects.get(plaid_transaction_id=plaid_transaction.transaction_id, user=user)
+                for key, value in transaction_data.items():
+                    setattr(transaction, key, value)
+                transaction.save()
+            except Transaction.DoesNotExist:
+                # If transaction doesn't exist when update=True, create it instead
+                transaction = Transaction.objects.create(**transaction_data)
+                transaction.category.add(category)
         else:
             # Create new transaction
             transaction = Transaction.objects.create(**transaction_data)
@@ -693,6 +727,8 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
         print(f"Account not found for transaction: {plaid_transaction.transaction_id}")
     except Exception as e:
         print(f"Error processing transaction {plaid_transaction.transaction_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 
 
