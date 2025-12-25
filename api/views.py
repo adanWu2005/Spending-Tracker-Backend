@@ -606,6 +606,16 @@ def sync_transactions(request):
         cursor = getattr(user_profile, 'transaction_cursor', None)
         print(f"Using cursor: {cursor}")
         
+        # If cursor exists but is very old (more than 30 days), clear it proactively
+        # to avoid TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION errors
+        if cursor and user_profile.updated_at:
+            days_since_update = (timezone.now() - user_profile.updated_at).days
+            if days_since_update > 30:
+                print(f"Cursor is {days_since_update} days old, clearing it proactively")
+                cursor = None
+                user_profile.transaction_cursor = None
+                user_profile.save()
+        
         # Sync transactions
         print("Calling Plaid API to sync transactions...")
         try:
@@ -616,7 +626,13 @@ def sync_transactions(request):
             # Check if this is a Plaid API exception
             if isinstance(sync_error, PlaidApiException):
                 error_body = sync_error.body
-                error_code = getattr(error_body, 'error_code', None)
+                # Try to get error_code from either dict or object
+                if isinstance(error_body, dict):
+                    error_code = error_body.get('error_code')
+                else:
+                    error_code = getattr(error_body, 'error_code', None)
+                
+                print(f"Plaid API error detected: error_code={error_code}, error_type={type(sync_error)}")
                 
                 # Check for ITEM_LOGIN_REQUIRED - user needs to re-authenticate
                 if error_code == 'ITEM_LOGIN_REQUIRED':
@@ -637,7 +653,9 @@ def sync_transactions(request):
                     }, status=status.HTTP_401_UNAUTHORIZED)
                 
                 # Check for TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION - cursor is stale, restart sync
-                if error_code == 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION':
+                # Also check error message string as fallback in case error_code extraction failed
+                error_text = str(sync_error)
+                if error_code == 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION' or 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION' in error_text:
                     print(f"Transaction data changed since last sync for user {request.user.id}; restarting sync without cursor")
                     cursor = None
                     user_profile.transaction_cursor = None
@@ -646,11 +664,13 @@ def sync_transactions(request):
                     # Continue to process the response below
                 else:
                     # For other Plaid API errors, re-raise to be handled by outer exception handler
+                    print(f"Unhandled Plaid API error code: {error_code}, error_text: {error_text[:200]}, re-raising exception")
                     raise
             else:
                 # Handle non-PlaidApiException errors (cursor-related string errors)
                 error_text = str(sync_error)
-                if "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
+                print(f"Non-PlaidApiException error: {error_text}")
+                if "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" in error_text or "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
                     print("Stored cursor invalid for access token; retrying sync with no cursor and clearing stored cursor")
                     cursor = None
                     user_profile.transaction_cursor = None
