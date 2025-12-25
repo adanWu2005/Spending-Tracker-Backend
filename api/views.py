@@ -616,86 +616,107 @@ def sync_transactions(request):
                 user_profile.transaction_cursor = None
                 user_profile.save()
         
-        # Sync transactions
+        # Sync transactions with pagination support
         print("Calling Plaid API to sync transactions...")
-        try:
-            sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, cursor)
-        except Exception as sync_error:
-            from plaid.exceptions import ApiException as PlaidApiException
+        total_added = 0
+        total_modified = 0
+        total_removed = 0
+        current_cursor = cursor
+        
+        # Loop until all pages are fetched
+        while True:
+            try:
+                sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, current_cursor)
+            except Exception as sync_error:
+                from plaid.exceptions import ApiException as PlaidApiException
+                
+                # Check if this is a Plaid API exception
+                if isinstance(sync_error, PlaidApiException):
+                    error_body = sync_error.body
+                    # Try to get error_code from either dict or object
+                    if isinstance(error_body, dict):
+                        error_code = error_body.get('error_code')
+                    else:
+                        error_code = getattr(error_body, 'error_code', None)
+                    
+                    print(f"Plaid API error detected: error_code={error_code}, error_type={type(sync_error)}")
+                    
+                    # Check for ITEM_LOGIN_REQUIRED - user needs to re-authenticate
+                    if error_code == 'ITEM_LOGIN_REQUIRED':
+                        print(f"Plaid access token expired for user {request.user.id}: ITEM_LOGIN_REQUIRED")
+                        return Response({
+                            'error': 'Your bank account connection has expired. Please reconnect your bank account.',
+                            'error_code': 'ITEM_LOGIN_REQUIRED',
+                            'requires_reauth': True
+                        }, status=status.HTTP_401_UNAUTHORIZED)
+                    
+                    # Check for INVALID_ACCESS_TOKEN
+                    if error_code == 'INVALID_ACCESS_TOKEN':
+                        print(f"Plaid access token is invalid for user {request.user.id}")
+                        return Response({
+                            'error': 'Your bank account connection is invalid. Please reconnect your bank account.',
+                            'error_code': 'INVALID_ACCESS_TOKEN',
+                            'requires_reauth': True
+                        }, status=status.HTTP_401_UNAUTHORIZED)
+                    
+                    # Check for TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION - cursor is stale, restart sync
+                    # Also check error message string as fallback in case error_code extraction failed
+                    error_text = str(sync_error)
+                    if error_code == 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION' or 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION' in error_text:
+                        print(f"Transaction data changed since last sync for user {request.user.id}; restarting sync without cursor")
+                        current_cursor = None
+                        user_profile.transaction_cursor = None
+                        user_profile.save()
+                        continue  # Retry with no cursor
+                    else:
+                        # For other Plaid API errors, re-raise to be handled by outer exception handler
+                        print(f"Unhandled Plaid API error code: {error_code}, error_text: {error_text[:200]}, re-raising exception")
+                        raise
+                else:
+                    # Handle non-PlaidApiException errors (cursor-related string errors)
+                    error_text = str(sync_error)
+                    print(f"Non-PlaidApiException error: {error_text}")
+                    if "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" in error_text or "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
+                        print("Stored cursor invalid for access token; retrying sync with no cursor and clearing stored cursor")
+                        current_cursor = None
+                        user_profile.transaction_cursor = None
+                        user_profile.save()
+                        continue  # Retry with no cursor
+                    else:
+                        raise
             
-            # Check if this is a Plaid API exception
-            if isinstance(sync_error, PlaidApiException):
-                error_body = sync_error.body
-                # Try to get error_code from either dict or object
-                if isinstance(error_body, dict):
-                    error_code = error_body.get('error_code')
-                else:
-                    error_code = getattr(error_body, 'error_code', None)
-                
-                print(f"Plaid API error detected: error_code={error_code}, error_type={type(sync_error)}")
-                
-                # Check for ITEM_LOGIN_REQUIRED - user needs to re-authenticate
-                if error_code == 'ITEM_LOGIN_REQUIRED':
-                    print(f"Plaid access token expired for user {request.user.id}: ITEM_LOGIN_REQUIRED")
-                    return Response({
-                        'error': 'Your bank account connection has expired. Please reconnect your bank account.',
-                        'error_code': 'ITEM_LOGIN_REQUIRED',
-                        'requires_reauth': True
-                    }, status=status.HTTP_401_UNAUTHORIZED)
-                
-                # Check for INVALID_ACCESS_TOKEN
-                if error_code == 'INVALID_ACCESS_TOKEN':
-                    print(f"Plaid access token is invalid for user {request.user.id}")
-                    return Response({
-                        'error': 'Your bank account connection is invalid. Please reconnect your bank account.',
-                        'error_code': 'INVALID_ACCESS_TOKEN',
-                        'requires_reauth': True
-                    }, status=status.HTTP_401_UNAUTHORIZED)
-                
-                # Check for TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION - cursor is stale, restart sync
-                # Also check error message string as fallback in case error_code extraction failed
-                error_text = str(sync_error)
-                if error_code == 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION' or 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION' in error_text:
-                    print(f"Transaction data changed since last sync for user {request.user.id}; restarting sync without cursor")
-                    cursor = None
-                    user_profile.transaction_cursor = None
-                    user_profile.save()
-                    sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, None)
-                    # Continue to process the response below
-                else:
-                    # For other Plaid API errors, re-raise to be handled by outer exception handler
-                    print(f"Unhandled Plaid API error code: {error_code}, error_text: {error_text[:200]}, re-raising exception")
-                    raise
-            else:
-                # Handle non-PlaidApiException errors (cursor-related string errors)
-                error_text = str(sync_error)
-                print(f"Non-PlaidApiException error: {error_text}")
-                if "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION" in error_text or "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
-                    print("Stored cursor invalid for access token; retrying sync with no cursor and clearing stored cursor")
-                    cursor = None
-                    user_profile.transaction_cursor = None
-                    user_profile.save()
-                    sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, None)
-                else:
-                    raise
-        print(f"Plaid response received: {len(sync_response.added)} added, {len(sync_response.modified)} modified")
+            # Process added transactions
+            for transaction in sync_response.added:
+                _process_transaction(request.user, transaction, plaid_service)
+            
+            # Process modified transactions
+            for transaction in sync_response.modified:
+                _process_transaction(request.user, transaction, plaid_service, update=True)
+            
+            # Accumulate counts
+            total_added += len(sync_response.added)
+            total_modified += len(sync_response.modified)
+            total_removed += len(sync_response.removed)
+            
+            print(f"Plaid response page: {len(sync_response.added)} added, {len(sync_response.modified)} modified, has_more={getattr(sync_response, 'has_more', False)}")
+            
+            # Check if there are more pages
+            has_more = getattr(sync_response, 'has_more', False)
+            if not has_more:
+                # No more pages, update cursor and break
+                user_profile.transaction_cursor = sync_response.next_cursor
+                user_profile.save()
+                break
+            
+            # Update cursor for next page
+            current_cursor = sync_response.next_cursor
         
-        # Process added transactions
-        for transaction in sync_response.added:
-            _process_transaction(request.user, transaction, plaid_service)
-        
-        # Process modified transactions
-        for transaction in sync_response.modified:
-            _process_transaction(request.user, transaction, plaid_service, update=True)
-        
-        # Update cursor
-        user_profile.transaction_cursor = sync_response.next_cursor
-        user_profile.save()
+        print(f"Sync complete: {total_added} total added, {total_modified} total modified, {total_removed} total removed")
 
         return Response({
-            'added': len(sync_response.added),
-            'modified': len(sync_response.modified),
-            'removed': len(sync_response.removed)
+            'added': total_added,
+            'modified': total_modified,
+            'removed': total_removed
         })
     except Exception as e:
         print(f"Error in sync_transactions: {str(e)}")
