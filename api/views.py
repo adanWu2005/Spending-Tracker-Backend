@@ -613,7 +613,7 @@ def sync_transactions(request):
         except Exception as sync_error:
             from plaid.exceptions import ApiException as PlaidApiException
             
-            # Check if this is a Plaid API exception (expired/invalid token)
+            # Check if this is a Plaid API exception
             if isinstance(sync_error, PlaidApiException):
                 error_body = sync_error.body
                 error_code = getattr(error_body, 'error_code', None)
@@ -635,17 +635,29 @@ def sync_transactions(request):
                         'error_code': 'INVALID_ACCESS_TOKEN',
                         'requires_reauth': True
                     }, status=status.HTTP_401_UNAUTHORIZED)
-            
-            # If the stored cursor is invalid for this access token, retry once with no cursor
-            error_text = str(sync_error)
-            if "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
-                print("Stored cursor invalid for access token; retrying sync with no cursor and clearing stored cursor")
-                cursor = None
-                user_profile.transaction_cursor = None
-                user_profile.save()
-                sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, None)
+                
+                # Check for TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION - cursor is stale, restart sync
+                if error_code == 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION':
+                    print(f"Transaction data changed since last sync for user {request.user.id}; restarting sync without cursor")
+                    cursor = None
+                    user_profile.transaction_cursor = None
+                    user_profile.save()
+                    sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, None)
+                    # Continue to process the response below
+                else:
+                    # For other Plaid API errors, re-raise to be handled by outer exception handler
+                    raise
             else:
-                raise
+                # Handle non-PlaidApiException errors (cursor-related string errors)
+                error_text = str(sync_error)
+                if "cursor not associated with access_token" in error_text.lower() or "INVALID_FIELD" in error_text:
+                    print("Stored cursor invalid for access token; retrying sync with no cursor and clearing stored cursor")
+                    cursor = None
+                    user_profile.transaction_cursor = None
+                    user_profile.save()
+                    sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, None)
+                else:
+                    raise
         print(f"Plaid response received: {len(sync_response.added)} added, {len(sync_response.modified)} modified")
         
         # Process added transactions
