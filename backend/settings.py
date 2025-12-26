@@ -20,21 +20,33 @@ import dj_database_url
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load .env file - try multiple locations
-# Try backend/.env first (most common), then backend/backend/.env, then root/.env
+# Prioritize backend/backend/.env (where the file actually is), then check other locations
 env_paths = [
-    BASE_DIR / '.env',  # backend/.env
-    BASE_DIR / 'backend' / '.env',  # backend/backend/.env
+    BASE_DIR / 'backend' / '.env',  # backend/backend/.env (actual location)
+    BASE_DIR / '.env',  # backend/.env (alternative location)
     BASE_DIR.parent / '.env',  # root/.env (DjangoPractice/.env)
 ]
 for env_path in env_paths:
     if env_path.exists():
         load_dotenv(env_path)
         print(f"✓ Loaded .env from: {env_path}")
+        # Verify OPENAI_API_KEY is loaded
+        openai_key = os.getenv('OPENAI_API_KEY')
+        if openai_key:
+            print(f"✓ OPENAI_API_KEY found (length: {len(openai_key)}, starts with: {openai_key[:7]}...)")
+        else:
+            print("⚠ WARNING: OPENAI_API_KEY not found in .env file")
         break
 else:
     # Fallback to default behavior (looks in current directory)
     load_dotenv()
     print("⚠ Using default .env loading behavior (checking current directory)")
+    # Check if key was loaded anyway
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if openai_key:
+        print(f"✓ OPENAI_API_KEY found via default loading (length: {len(openai_key)})")
+    else:
+        print("⚠ WARNING: OPENAI_API_KEY still not found")
 
 
 # Quick-start development settings - unsuitable for production
