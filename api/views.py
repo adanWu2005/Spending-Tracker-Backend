@@ -10,6 +10,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 from datetime import datetime, timedelta
 import json
+import os
+from openai import OpenAI
 from .serializer import (
     User_Serialzier, UserProfileSerializer, BankAccountSerializer,
     SpendingCategorySerializer, TransactionSerializer
@@ -819,11 +821,104 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
         traceback.print_exc()
 
 
+def categorize_transaction_with_openai(transaction_name, merchant_name, amount):
+    """Categorize a transaction using OpenAI"""
+    try:
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if not openai_api_key:
+            return 'Uncategorized'
+        
+        client = OpenAI(api_key=openai_api_key)
+        
+        # Build the prompt
+        prompt = f"""Categorize the following transaction into one of these common spending categories:
+- Food & Dining (restaurants, groceries, food delivery)
+- Shopping (retail stores, online shopping, clothing)
+- Transportation (gas, parking, public transit, rideshare)
+- Bills & Utilities (electricity, water, internet, phone)
+- Entertainment (movies, concerts, streaming services, games)
+- Healthcare (doctor visits, pharmacy, medical expenses)
+- Travel (hotels, flights, vacation expenses)
+- Banking & Financial (fees, transfers, investments)
+- Education (tuition, books, courses)
+- Home & Garden (home improvement, furniture, supplies)
+- Personal Care (salon, spa, personal hygiene)
+- Gifts & Donations (charity, gifts)
+- Other (anything that doesn't fit above categories)
+
+Transaction Name: {transaction_name}
+Merchant: {merchant_name or 'N/A'}
+Amount: ${abs(float(amount))}
+
+Respond with ONLY the category name, nothing else."""
+        
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a financial transaction categorizer. Respond with only the category name."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=50,
+            temperature=0.3
+        )
+        
+        category = response.choices[0].message.content.strip()
+        return category
+    except Exception as e:
+        print(f"Error categorizing transaction with OpenAI: {str(e)}")
+        return 'Uncategorized'
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def categorize_transactions(request):
+    """Categorize transactions from the last 30 days using OpenAI"""
+    try:
+        # Get transactions from the last 30 days
+        start_date = (timezone.now() - timedelta(days=30)).date()
+        end_date = timezone.now().date()
+        
+        transactions = Transaction.objects.filter(
+            user=request.user,
+            date__range=[start_date, end_date],
+            amount__lt=0  # Only expenses
+        )
+        
+        categorized_count = 0
+        for transaction in transactions:
+            # Skip if already has a category
+            if transaction.primary_category:
+                continue
+            
+            # Get or create the category
+            category_name = categorize_transaction_with_openai(
+                transaction.name,
+                transaction.merchant_name,
+                transaction.amount
+            )
+            
+            category, created = SpendingCategory.objects.get_or_create(
+                name=category_name,
+                defaults={'description': f'Auto-categorized: {category_name}'}
+            )
+            
+            transaction.primary_category = category
+            transaction.save()
+            categorized_count += 1
+        
+        return Response({
+            'message': f'Successfully categorized {categorized_count} transactions',
+            'categorized_count': categorized_count,
+            'total_transactions': transactions.count()
+        })
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def spending_summary(request):
-    """Get spending summary by category"""
+    """Get spending summary by category using AI-categorized transactions"""
     try:
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
@@ -837,6 +932,31 @@ def spending_summary(request):
             user=request.user,
             date__range=[start_date, end_date],
             amount__lt=0  # Only expenses, not income
+        )
+        
+        # Categorize uncategorized transactions on-the-fly
+        uncategorized_transactions = [t for t in transactions if not t.primary_category]
+        if uncategorized_transactions:
+            for transaction in uncategorized_transactions:
+                category_name = categorize_transaction_with_openai(
+                    transaction.name,
+                    transaction.merchant_name,
+                    transaction.amount
+                )
+                
+                category, created = SpendingCategory.objects.get_or_create(
+                    name=category_name,
+                    defaults={'description': f'Auto-categorized: {category_name}'}
+                )
+                
+                transaction.primary_category = category
+                transaction.save()
+        
+        # Refresh transactions to get updated categories
+        transactions = Transaction.objects.filter(
+            user=request.user,
+            date__range=[start_date, end_date],
+            amount__lt=0
         )
         
         summary = {}

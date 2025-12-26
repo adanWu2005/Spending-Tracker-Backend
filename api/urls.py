@@ -43,6 +43,7 @@ urlpatterns = [
     
     # Analytics
     path('spending-summary/', views.spending_summary, name='spending-summary'),
+    path('categorize-transactions/', views.categorize_transactions, name='categorize-transactions'),
     
     # Debug
     path('debug/transactions/', views.debug_transactions, name='debug-transactions'),
