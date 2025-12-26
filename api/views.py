@@ -1138,17 +1138,23 @@ def spending_summary(request):
         summary = dict(sorted(summary.items(), key=lambda x: x[1], reverse=True))
         
         # Add debug info to response (only in debug mode or if requested)
-        response_data = summary
-        if request.query_params.get('debug') == 'true' or os.getenv('DEBUG', 'False').lower() == 'true':
+        debug_mode = request.query_params.get('debug') == 'true' or os.getenv('DEBUG', 'False').lower() == 'true'
+        
+        if debug_mode:
             response_data = {
                 'summary': summary,
                 'debug': {
                     'total_transactions': total_transactions,
                     'ai_categorized_count': ai_categorized_count,
                     'openai_key_configured': bool(os.getenv('OPENAI_API_KEY')),
-                    'transactions_fixed': len(transactions_to_fix) if 'transactions_to_fix' in locals() else 0
+                    'transactions_fixed': len(transactions_to_fix) if 'transactions_to_fix' in locals() else 0,
+                    'categories': list(summary.keys())
                 }
             }
+            print(f"DEBUG: Returning spending summary with debug info. Categories: {list(summary.keys())}")
+        else:
+            response_data = summary
+            print(f"Returning spending summary without debug info. Categories: {list(summary.keys())}")
         
         return Response(response_data)
     except Exception as e:
