@@ -929,6 +929,20 @@ Respond with ONLY the category name (e.g., "Entertainment", "Transportation", "S
             else:
                 category = 'Other'
         
+        # CRITICAL: Never categorize expenses (negative amounts) as "Income"
+        # If AI incorrectly returns "Income" for an expense, use name-based heuristics
+        if is_expense and category == 'Income':
+            print(f"WARNING: AI incorrectly categorized expense '{transaction_name}' as Income, using heuristics...")
+            name_lower = transaction_name.lower()
+            if 'basketball' in name_lower or 'sport' in name_lower or 'reddot' in name_lower or 'recreation' in name_lower or 'gym' in name_lower or 'fitness' in name_lower:
+                category = 'Entertainment'
+            elif 'uber' in name_lower or 'lyft' in name_lower or 'taxi' in name_lower:
+                category = 'Transportation'
+            elif 'shoppers' in name_lower or 'drug' in name_lower:
+                category = 'Shopping'
+            else:
+                category = 'Other'
+        
         print(f"OpenAI categorized '{transaction_name}' (merchant: {merchant_name}) as '{category}'")
         return category
     except Exception as e:
@@ -1021,17 +1035,43 @@ def spending_summary(request):
         
         # Re-categorize transactions that are incorrectly categorized:
         # 1. Uncategorized transactions
-        # 2. Expense transactions (negative amounts) incorrectly categorized as "Income"
+        # 2. Expense transactions incorrectly categorized as "Income" (regardless of amount sign)
+        # 3. Transactions with names that suggest they're mis-categorized
         uncategorized_transactions = [t for t in transactions if not t.primary_category]
-        incorrectly_categorized = [
+        # Since we're filtering for expenses (amount < 0), any transaction categorized as "Income" is wrong
+        incorrectly_categorized_income = [
             t for t in transactions 
-            if t.primary_category and t.primary_category.name == 'Income' and t.amount < 0
+            if t.primary_category and t.primary_category.name == 'Income'
         ]
         
-        transactions_to_fix = uncategorized_transactions + incorrectly_categorized
+        # Check for transactions that are likely mis-categorized based on their names
+        # This catches cases like "REDDOT BASKETBALL" categorized as "Income" or "Other"
+        potentially_miscategorized = []
+        for t in transactions:
+            if t.primary_category and t.amount < 0:  # Only check expenses
+                name_lower = t.name.lower()
+                current_category = t.primary_category.name.lower() if t.primary_category else ''
+                
+                # Sports/recreation facilities should be Entertainment
+                if ('basketball' in name_lower or 'sport' in name_lower or 'recreation' in name_lower or 
+                    'gym' in name_lower or 'fitness' in name_lower or 'reddot' in name_lower or
+                    'athletic' in name_lower or 'arena' in name_lower or 'stadium' in name_lower):
+                    if current_category not in ['entertainment']:
+                        potentially_miscategorized.append(t)
+                # Uber/Lyft should be Transportation
+                elif ('uber' in name_lower or 'lyft' in name_lower or 'taxi' in name_lower):
+                    if current_category not in ['transportation']:
+                        potentially_miscategorized.append(t)
+                # Drug stores/pharmacies should be Shopping (unless medical-related)
+                elif ('shoppers' in name_lower or ('drug' in name_lower and 'mart' in name_lower)):
+                    if current_category not in ['shopping', 'healthcare']:
+                        potentially_miscategorized.append(t)
+        
+        # Combine all transactions that need fixing, removing duplicates
+        transactions_to_fix = list(set(uncategorized_transactions + incorrectly_categorized_income + potentially_miscategorized))
         
         if transactions_to_fix:
-            print(f"Found {len(transactions_to_fix)} transactions to categorize/fix ({len(uncategorized_transactions)} uncategorized, {len(incorrectly_categorized)} incorrectly categorized as Income), categorizing with AI...")
+            print(f"Found {len(transactions_to_fix)} transactions to categorize/fix ({len(uncategorized_transactions)} uncategorized, {len(incorrectly_categorized_income)} incorrectly as Income, {len(potentially_miscategorized)} potentially miscategorized), categorizing with AI...")
             for transaction in transactions_to_fix:
                 try:
                     category_name = categorize_transaction_with_openai(
