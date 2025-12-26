@@ -837,8 +837,13 @@ def categorize_transaction_with_openai(transaction_name, merchant_name, amount):
     """Categorize a transaction using OpenAI"""
     try:
         openai_api_key = os.getenv('OPENAI_API_KEY')
+        print(f"DEBUG: Checking for OPENAI_API_KEY... Found: {'Yes' if openai_api_key else 'No'}")
+        if openai_api_key:
+            print(f"DEBUG: OPENAI_API_KEY starts with: {openai_api_key[:10]}...")
+        
         if not openai_api_key:
             print("WARNING: OPENAI_API_KEY not set in environment variables")
+            print(f"DEBUG: All env vars with 'OPENAI': {[k for k in os.environ.keys() if 'OPENAI' in k.upper()]}")
             return 'Other'
         
         client = OpenAI(api_key=openai_api_key)
@@ -944,6 +949,7 @@ Respond with ONLY the category name (e.g., "Entertainment", "Transportation", "S
                 category = 'Other'
         
         print(f"OpenAI categorized '{transaction_name}' (merchant: {merchant_name}) as '{category}'")
+        print(f"DEBUG: Successfully used OpenAI API for categorization")
         return category
     except Exception as e:
         print(f"Error categorizing transaction with OpenAI: {str(e)}")
@@ -1132,6 +1138,46 @@ def spending_summary(request):
         import traceback
         traceback.print_exc()
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def test_openai_key(request):
+    """Test endpoint to check if OpenAI API key is loaded correctly"""
+    import os
+    openai_api_key = os.getenv('OPENAI_API_KEY')
+    
+    result = {
+        'openai_key_found': bool(openai_api_key),
+        'openai_key_preview': openai_api_key[:10] + '...' if openai_api_key else None,
+        'openai_key_length': len(openai_api_key) if openai_api_key else 0,
+    }
+    
+    # Try to make a test API call
+    if openai_api_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_api_key)
+            # Make a minimal test call
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "Say 'test'"}],
+                max_tokens=5
+            )
+            result['openai_test_successful'] = True
+            result['openai_response'] = response.choices[0].message.content.strip()
+        except Exception as e:
+            result['openai_test_successful'] = False
+            result['openai_error'] = str(e)
+    else:
+        result['openai_test_successful'] = False
+        result['openai_error'] = 'No API key found'
+    
+    # Show all environment variables with 'OPENAI' in the name
+    result['env_vars_with_openai'] = {k: v[:10] + '...' if len(v) > 10 else v 
+                                      for k, v in os.environ.items() 
+                                      if 'OPENAI' in k.upper()}
+    
+    return Response(result)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

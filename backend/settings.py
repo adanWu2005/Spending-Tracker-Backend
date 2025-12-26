@@ -16,10 +16,25 @@ from dotenv import load_dotenv
 import os
 import dj_database_url
 
-load_dotenv()
-
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env file - try multiple locations
+# Try backend/.env first (most common), then backend/backend/.env, then root/.env
+env_paths = [
+    BASE_DIR / '.env',  # backend/.env
+    BASE_DIR / 'backend' / '.env',  # backend/backend/.env
+    BASE_DIR.parent / '.env',  # root/.env (DjangoPractice/.env)
+]
+for env_path in env_paths:
+    if env_path.exists():
+        load_dotenv(env_path)
+        print(f"✓ Loaded .env from: {env_path}")
+        break
+else:
+    # Fallback to default behavior (looks in current directory)
+    load_dotenv()
+    print("⚠ Using default .env loading behavior (checking current directory)")
 
 
 # Quick-start development settings - unsuitable for production
