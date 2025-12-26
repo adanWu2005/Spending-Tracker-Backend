@@ -762,26 +762,33 @@ def sync_transactions(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 def _process_transaction(user, plaid_transaction, plaid_service, update=False):
-    """Process a single transaction from Plaid"""
+    """Process a single transaction from Plaid and automatically categorize using AI"""
     try:
         # Get or create the account
         account = BankAccount.objects.get(plaid_account_id=plaid_transaction.account_id, user=user)
-        
-        # Use Plaid's category if available, otherwise use basic categorization
-        if hasattr(plaid_transaction, 'category') and plaid_transaction.category:
-            # Use the primary category from Plaid
-            category_name = plaid_transaction.category[0] if plaid_transaction.category else 'Other'
-        else:
-            # Fallback to basic categorization
-            category_name = plaid_service.categorize_transaction(plaid_transaction.name, plaid_transaction.amount)
-        
-        category, created = SpendingCategory.objects.get_or_create(name=category_name)
         
         # Safely get transaction attributes with defaults
         merchant_name = getattr(plaid_transaction, 'merchant_name', None)
         payment_channel = getattr(plaid_transaction, 'payment_channel', None)
         transaction_type = getattr(plaid_transaction, 'transaction_type', None)
         pending = getattr(plaid_transaction, 'pending', False)
+        
+        # Always use AI to categorize based on transaction name
+        # This ensures consistent, intelligent categorization
+        category_name = categorize_transaction_with_openai(
+            plaid_transaction.name,
+            merchant_name,
+            plaid_transaction.amount
+        )
+        
+        # If AI returns 'Uncategorized', use 'Other' as fallback
+        if not category_name or category_name == 'Uncategorized':
+            category_name = 'Other'
+        
+        category, created = SpendingCategory.objects.get_or_create(
+            name=category_name,
+            defaults={'description': f'Auto-categorized: {category_name}'}
+        )
         
         transaction_data = {
             'user': user,
@@ -804,6 +811,9 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
                 for key, value in transaction_data.items():
                     setattr(transaction, key, value)
                 transaction.save()
+                # Update category relationship
+                transaction.category.clear()
+                transaction.category.add(category)
             except Transaction.DoesNotExist:
                 # If transaction doesn't exist when update=True, create it instead
                 transaction = Transaction.objects.create(**transaction_data)
@@ -812,6 +822,8 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
             # Create new transaction
             transaction = Transaction.objects.create(**transaction_data)
             transaction.category.add(category)
+            
+        print(f"Successfully processed and categorized transaction: {plaid_transaction.name} -> {category_name}")
             
     except BankAccount.DoesNotExist:
         print(f"Account not found for transaction: {plaid_transaction.transaction_id}")
@@ -826,6 +838,7 @@ def categorize_transaction_with_openai(transaction_name, merchant_name, amount):
     try:
         openai_api_key = os.getenv('OPENAI_API_KEY')
         if not openai_api_key:
+            print("WARNING: OPENAI_API_KEY not set in environment variables")
             return 'Uncategorized'
         
         client = OpenAI(api_key=openai_api_key)
@@ -863,9 +876,12 @@ Respond with ONLY the category name, nothing else."""
         )
         
         category = response.choices[0].message.content.strip()
+        print(f"OpenAI categorized '{transaction_name}' as '{category}'")
         return category
     except Exception as e:
         print(f"Error categorizing transaction with OpenAI: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return 'Uncategorized'
 
 
@@ -884,31 +900,41 @@ def categorize_transactions(request):
             amount__lt=0  # Only expenses
         )
         
+        # Re-categorize ALL transactions with OpenAI (not just uncategorized ones)
+        # This ensures we use AI categories instead of Plaid categories
         categorized_count = 0
+        failed_count = 0
+        
         for transaction in transactions:
-            # Skip if already has a category
-            if transaction.primary_category:
+            try:
+                # Get or create the category using OpenAI
+                category_name = categorize_transaction_with_openai(
+                    transaction.name,
+                    transaction.merchant_name,
+                    transaction.amount
+                )
+                
+                if category_name and category_name != 'Uncategorized':
+                    category, created = SpendingCategory.objects.get_or_create(
+                        name=category_name,
+                        defaults={'description': f'Auto-categorized: {category_name}'}
+                    )
+                    
+                    transaction.primary_category = category
+                    transaction.save()
+                    categorized_count += 1
+                else:
+                    failed_count += 1
+                    print(f"Failed to get valid category for transaction {transaction.id}: {transaction.name}")
+            except Exception as e:
+                failed_count += 1
+                print(f"Error categorizing transaction {transaction.id}: {str(e)}")
                 continue
-            
-            # Get or create the category
-            category_name = categorize_transaction_with_openai(
-                transaction.name,
-                transaction.merchant_name,
-                transaction.amount
-            )
-            
-            category, created = SpendingCategory.objects.get_or_create(
-                name=category_name,
-                defaults={'description': f'Auto-categorized: {category_name}'}
-            )
-            
-            transaction.primary_category = category
-            transaction.save()
-            categorized_count += 1
         
         return Response({
             'message': f'Successfully categorized {categorized_count} transactions',
             'categorized_count': categorized_count,
+            'failed_count': failed_count,
             'total_transactions': transactions.count()
         })
     except Exception as e:
@@ -918,39 +944,67 @@ def categorize_transactions(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def spending_summary(request):
-    """Get spending summary by category using AI-categorized transactions"""
+    """Get spending summary by category using AI-categorized transactions from the last 30 days"""
     try:
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+        # Always use last 30 days as default for spending summary
+        end_date = timezone.now().date()
+        start_date = (timezone.now() - timedelta(days=30)).date()
         
-        if not start_date:
-            start_date = (timezone.now() - timedelta(days=30)).date()
-        if not end_date:
-            end_date = timezone.now().date()
+        # Allow override via query params if needed
+        if request.query_params.get('start_date'):
+            start_date = datetime.strptime(request.query_params.get('start_date'), '%Y-%m-%d').date()
+        if request.query_params.get('end_date'):
+            end_date = datetime.strptime(request.query_params.get('end_date'), '%Y-%m-%d').date()
         
+        # Get all transactions from the last 30 days (expenses only)
+        # Transactions are now automatically categorized when synced, so they should all have categories
         transactions = Transaction.objects.filter(
             user=request.user,
             date__range=[start_date, end_date],
             amount__lt=0  # Only expenses, not income
         )
         
-        # Categorize uncategorized transactions on-the-fly
+        print(f"Found {transactions.count()} transactions in the last 30 days")
+        
+        # Handle any legacy uncategorized transactions (fallback for old data)
         uncategorized_transactions = [t for t in transactions if not t.primary_category]
         if uncategorized_transactions:
+            print(f"Found {len(uncategorized_transactions)} uncategorized transactions, categorizing with AI...")
             for transaction in uncategorized_transactions:
-                category_name = categorize_transaction_with_openai(
-                    transaction.name,
-                    transaction.merchant_name,
-                    transaction.amount
-                )
-                
-                category, created = SpendingCategory.objects.get_or_create(
-                    name=category_name,
-                    defaults={'description': f'Auto-categorized: {category_name}'}
-                )
-                
-                transaction.primary_category = category
-                transaction.save()
+                try:
+                    category_name = categorize_transaction_with_openai(
+                        transaction.name,
+                        transaction.merchant_name,
+                        transaction.amount
+                    )
+                    
+                    if category_name and category_name != 'Uncategorized':
+                        category, created = SpendingCategory.objects.get_or_create(
+                            name=category_name,
+                            defaults={'description': f'Auto-categorized: {category_name}'}
+                        )
+                        transaction.primary_category = category
+                        transaction.save()
+                    else:
+                        # If AI returns 'Uncategorized', use 'Other' as fallback
+                        category, created = SpendingCategory.objects.get_or_create(
+                            name='Other',
+                            defaults={'description': 'Miscellaneous transactions'}
+                        )
+                        transaction.primary_category = category
+                        transaction.save()
+                except Exception as e:
+                    print(f"Failed to categorize transaction {transaction.id}: {str(e)}")
+                    # Assign 'Other' as fallback
+                    try:
+                        category, created = SpendingCategory.objects.get_or_create(
+                            name='Other',
+                            defaults={'description': 'Miscellaneous transactions'}
+                        )
+                        transaction.primary_category = category
+                        transaction.save()
+                    except:
+                        pass
         
         # Refresh transactions to get updated categories
         transactions = Transaction.objects.filter(
@@ -959,15 +1013,22 @@ def spending_summary(request):
             amount__lt=0
         )
         
+        # Group transactions by category and sum amounts
         summary = {}
         for transaction in transactions:
-            category_name = transaction.primary_category.name if transaction.primary_category else 'Uncategorized'
+            category_name = transaction.primary_category.name if transaction.primary_category else 'Other'
             if category_name not in summary:
                 summary[category_name] = 0
             summary[category_name] += abs(transaction.amount)
         
+        # Sort by amount (descending) for better UX
+        summary = dict(sorted(summary.items(), key=lambda x: x[1], reverse=True))
+        
         return Response(summary)
     except Exception as e:
+        print(f"Error in spending_summary: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
