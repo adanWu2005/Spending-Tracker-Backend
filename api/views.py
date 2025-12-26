@@ -839,50 +839,103 @@ def categorize_transaction_with_openai(transaction_name, merchant_name, amount):
         openai_api_key = os.getenv('OPENAI_API_KEY')
         if not openai_api_key:
             print("WARNING: OPENAI_API_KEY not set in environment variables")
-            return 'Uncategorized'
+            return 'Other'
         
         client = OpenAI(api_key=openai_api_key)
         
-        # Build the prompt
-        prompt = f"""Categorize the following transaction into one of these common spending categories:
-- Food & Dining (restaurants, groceries, food delivery)
-- Shopping (retail stores, online shopping, clothing)
-- Transportation (gas, parking, public transit, rideshare)
-- Bills & Utilities (electricity, water, internet, phone)
-- Entertainment (movies, concerts, streaming services, games)
-- Healthcare (doctor visits, pharmacy, medical expenses)
-- Travel (hotels, flights, vacation expenses)
-- Banking & Financial (fees, transfers, investments)
-- Education (tuition, books, courses)
-- Home & Garden (home improvement, furniture, supplies)
-- Personal Care (salon, spa, personal hygiene)
-- Gifts & Donations (charity, gifts)
-- Other (anything that doesn't fit above categories)
+        # Determine if this is an expense (negative amount) or income (positive amount)
+        is_expense = float(amount) < 0
+        amount_abs = abs(float(amount))
+        
+        # Build a more detailed and context-aware prompt
+        prompt = f"""Analyze this financial transaction and categorize it accurately.
 
-Transaction Name: {transaction_name}
-Merchant: {merchant_name or 'N/A'}
-Amount: ${abs(float(amount))}
+IMPORTANT CONTEXT:
+- Negative amounts = expenses (money going out)
+- Positive amounts = income (money coming in)
+- Focus on what the transaction actually represents, not just keywords
 
-Respond with ONLY the category name, nothing else."""
+Transaction Details:
+- Transaction Name: {transaction_name}
+- Merchant Name: {merchant_name or 'Not provided'}
+- Amount: ${amount_abs:.2f}
+- Type: {'Expense' if is_expense else 'Income'}
+
+Available Categories (choose the BEST match):
+1. Food & Dining - Restaurants, cafes, fast food, grocery stores, food delivery services
+2. Shopping - Retail stores, online shopping, department stores, clothing stores, electronics, drug stores
+3. Transportation - Gas stations, parking, public transit, rideshare (Uber, Lyft), car services, tolls
+4. Bills & Utilities - Electricity, water, gas, internet, phone, cable, utility companies
+5. Entertainment - Movies, concerts, sports events, recreation centers, gyms, streaming services (Netflix, Spotify), games, sports activities (basketball, soccer, etc.), amusement parks, recreation facilities
+6. Healthcare - Doctor visits, hospitals, pharmacies, medical expenses, dental, vision
+7. Travel - Hotels, flights, airlines, vacation rentals, travel agencies
+8. Banking & Financial - Bank fees, ATM withdrawals, transfers, investment services, financial services
+9. Education - Tuition, schools, universities, books, courses, educational services
+10. Home & Garden - Home improvement stores, furniture stores, hardware stores, garden centers
+11. Personal Care - Salons, spas, barbershops, personal hygiene products, cosmetics
+12. Gifts & Donations - Charity organizations, gift purchases, donations
+13. Other - Anything that doesn't clearly fit the above categories
+
+Examples:
+- "REDDOT BASKETBALL" or any sports/recreation facility = Entertainment
+- "UBER" or "LYFT" = Transportation
+- "Shoppers Drug Mart" or pharmacy = Shopping
+- "Starbucks" or restaurant = Food & Dining
+- "Amazon" = Shopping
+
+Respond with ONLY the category name (e.g., "Entertainment", "Transportation", "Shopping"), nothing else."""
         
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a financial transaction categorizer. Respond with only the category name."},
+                {"role": "system", "content": "You are an expert financial transaction categorizer. Analyze the transaction name and merchant to determine the most appropriate spending category. Consider the actual nature of the transaction, not just keywords. Sports and recreation activities should be categorized as Entertainment. Always respond with only the category name."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=50,
-            temperature=0.3
+            max_tokens=30,
+            temperature=0.1  # Lower temperature for more consistent categorization
         )
         
         category = response.choices[0].message.content.strip()
-        print(f"OpenAI categorized '{transaction_name}' as '{category}'")
+        
+        # Clean up the response - remove any extra text, quotes, or formatting
+        category = category.replace('"', '').replace("'", '').strip()
+        
+        # Validate the category is one of our expected categories
+        valid_categories = [
+            'Food & Dining', 'Shopping', 'Transportation', 'Bills & Utilities',
+            'Entertainment', 'Healthcare', 'Travel', 'Banking & Financial',
+            'Education', 'Home & Garden', 'Personal Care', 'Gifts & Donations', 'Other'
+        ]
+        
+        # Check if the category matches (case-insensitive)
+        category_normalized = category.title()
+        for valid_cat in valid_categories:
+            if valid_cat.lower() == category_normalized.lower():
+                category = valid_cat
+                break
+        else:
+            # If no match found, try to map common variations
+            category_lower = category.lower()
+            if 'food' in category_lower or 'dining' in category_lower or 'restaurant' in category_lower:
+                category = 'Food & Dining'
+            elif 'shop' in category_lower or 'retail' in category_lower or 'drug' in category_lower:
+                category = 'Shopping'
+            elif 'transport' in category_lower or 'uber' in category_lower or 'lyft' in category_lower:
+                category = 'Transportation'
+            elif 'entertainment' in category_lower or 'sport' in category_lower or 'recreation' in category_lower or 'basketball' in category_lower or 'gym' in category_lower:
+                category = 'Entertainment'
+            elif 'health' in category_lower or 'medical' in category_lower:
+                category = 'Healthcare'
+            else:
+                category = 'Other'
+        
+        print(f"OpenAI categorized '{transaction_name}' (merchant: {merchant_name}) as '{category}'")
         return category
     except Exception as e:
         print(f"Error categorizing transaction with OpenAI: {str(e)}")
         import traceback
         traceback.print_exc()
-        return 'Uncategorized'
+        return 'Other'
 
 
 @api_view(['POST'])
@@ -966,11 +1019,20 @@ def spending_summary(request):
         
         print(f"Found {transactions.count()} transactions in the last 30 days")
         
-        # Handle any legacy uncategorized transactions (fallback for old data)
+        # Re-categorize transactions that are incorrectly categorized:
+        # 1. Uncategorized transactions
+        # 2. Expense transactions (negative amounts) incorrectly categorized as "Income"
         uncategorized_transactions = [t for t in transactions if not t.primary_category]
-        if uncategorized_transactions:
-            print(f"Found {len(uncategorized_transactions)} uncategorized transactions, categorizing with AI...")
-            for transaction in uncategorized_transactions:
+        incorrectly_categorized = [
+            t for t in transactions 
+            if t.primary_category and t.primary_category.name == 'Income' and t.amount < 0
+        ]
+        
+        transactions_to_fix = uncategorized_transactions + incorrectly_categorized
+        
+        if transactions_to_fix:
+            print(f"Found {len(transactions_to_fix)} transactions to categorize/fix ({len(uncategorized_transactions)} uncategorized, {len(incorrectly_categorized)} incorrectly categorized as Income), categorizing with AI...")
+            for transaction in transactions_to_fix:
                 try:
                     category_name = categorize_transaction_with_openai(
                         transaction.name,
