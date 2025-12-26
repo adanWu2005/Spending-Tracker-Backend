@@ -949,7 +949,6 @@ Respond with ONLY the category name (e.g., "Entertainment", "Transportation", "S
                 category = 'Other'
         
         print(f"OpenAI categorized '{transaction_name}' (merchant: {merchant_name}) as '{category}'")
-        print(f"DEBUG: Successfully used OpenAI API for categorization")
         return category
     except Exception as e:
         print(f"Error categorizing transaction with OpenAI: {str(e)}")
@@ -1123,16 +1122,35 @@ def spending_summary(request):
         
         # Group transactions by category and sum amounts
         summary = {}
+        ai_categorized_count = 0
+        total_transactions = transactions.count()
+        
         for transaction in transactions:
             category_name = transaction.primary_category.name if transaction.primary_category else 'Other'
             if category_name not in summary:
                 summary[category_name] = 0
             summary[category_name] += abs(transaction.amount)
+            # Count transactions that were likely categorized by AI (not "Other" or "Uncategorized")
+            if transaction.primary_category and transaction.primary_category.name not in ['Other', 'Uncategorized']:
+                ai_categorized_count += 1
         
         # Sort by amount (descending) for better UX
         summary = dict(sorted(summary.items(), key=lambda x: x[1], reverse=True))
         
-        return Response(summary)
+        # Add debug info to response (only in debug mode or if requested)
+        response_data = summary
+        if request.query_params.get('debug') == 'true' or os.getenv('DEBUG', 'False').lower() == 'true':
+            response_data = {
+                'summary': summary,
+                'debug': {
+                    'total_transactions': total_transactions,
+                    'ai_categorized_count': ai_categorized_count,
+                    'openai_key_configured': bool(os.getenv('OPENAI_API_KEY')),
+                    'transactions_fixed': len(transactions_to_fix) if 'transactions_to_fix' in locals() else 0
+                }
+            }
+        
+        return Response(response_data)
     except Exception as e:
         print(f"Error in spending_summary: {str(e)}")
         import traceback
