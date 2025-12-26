@@ -1019,54 +1019,93 @@ def spending_summary(request):
         
         print(f"Found {transactions.count()} transactions in the last 30 days")
         
-        # Re-categorize transactions that are incorrectly categorized:
-        # 1. Uncategorized transactions
-        # 2. Expense transactions (negative amounts) incorrectly categorized as "Income"
-        uncategorized_transactions = [t for t in transactions if not t.primary_category]
-        incorrectly_categorized = [
-            t for t in transactions 
-            if t.primary_category and t.primary_category.name == 'Income' and t.amount < 0
-        ]
+        # Check if we should force re-categorization of all transactions
+        force_recategorize = request.query_params.get('force_recategorize', 'false').lower() == 'true'
         
-        transactions_to_fix = uncategorized_transactions + incorrectly_categorized
+        if force_recategorize:
+            # Re-categorize ALL transactions
+            transactions_to_fix = list(transactions)
+            print(f"Force re-categorizing all {len(transactions_to_fix)} transactions...")
+        else:
+            # Re-categorize transactions that need fixing:
+            # 1. Uncategorized transactions
+            # 2. Expense transactions incorrectly categorized as "Income"
+            # 3. Transactions with obviously wrong categories (check for common mis-categorizations)
+            uncategorized_transactions = [t for t in transactions if not t.primary_category]
+            incorrectly_categorized_income = [
+                t for t in transactions 
+                if t.primary_category and t.primary_category.name == 'Income' and t.amount < 0
+            ]
+            
+            # Check for transactions that might be mis-categorized based on their names
+            # (e.g., sports/recreation facilities should be Entertainment, not Other or Income)
+            potentially_miscategorized = []
+            for t in transactions:
+                if t.primary_category and t.amount < 0:  # Only check expenses
+                    name_lower = t.name.lower()
+                    current_category = t.primary_category.name.lower()
+                    
+                    # Check if transaction name suggests a different category
+                    if ('basketball' in name_lower or 'sport' in name_lower or 'recreation' in name_lower or 
+                        'gym' in name_lower or 'fitness' in name_lower or 'reddot' in name_lower) and current_category not in ['entertainment']:
+                        potentially_miscategorized.append(t)
+                    elif ('uber' in name_lower or 'lyft' in name_lower) and current_category not in ['transportation']:
+                        potentially_miscategorized.append(t)
+                    elif ('shoppers' in name_lower or 'drug' in name_lower) and current_category not in ['shopping', 'healthcare']:
+                        potentially_miscategorized.append(t)
+            
+            transactions_to_fix = list(set(uncategorized_transactions + incorrectly_categorized_income + potentially_miscategorized))
         
         if transactions_to_fix:
-            print(f"Found {len(transactions_to_fix)} transactions to categorize/fix ({len(uncategorized_transactions)} uncategorized, {len(incorrectly_categorized)} incorrectly categorized as Income), categorizing with AI...")
+            print(f"Found {len(transactions_to_fix)} transactions to re-categorize ({len(uncategorized_transactions)} uncategorized, {len(incorrectly_categorized_income)} incorrectly as Income, {len(potentially_miscategorized)} potentially miscategorized)")
+            categorized_count = 0
             for transaction in transactions_to_fix:
-                try:
-                    category_name = categorize_transaction_with_openai(
-                        transaction.name,
-                        transaction.merchant_name,
-                        transaction.amount
+            try:
+                category_name = categorize_transaction_with_openai(
+                    transaction.name,
+                    transaction.merchant_name,
+                    transaction.amount
+                )
+                
+                if category_name and category_name != 'Uncategorized':
+                    category, created = SpendingCategory.objects.get_or_create(
+                        name=category_name,
+                        defaults={'description': f'Auto-categorized: {category_name}'}
                     )
-                    
-                    if category_name and category_name != 'Uncategorized':
-                        category, created = SpendingCategory.objects.get_or_create(
-                            name=category_name,
-                            defaults={'description': f'Auto-categorized: {category_name}'}
-                        )
+                    # Only update if category changed to avoid unnecessary saves
+                    if not transaction.primary_category or transaction.primary_category.name != category_name:
                         transaction.primary_category = category
                         transaction.save()
-                    else:
-                        # If AI returns 'Uncategorized', use 'Other' as fallback
-                        category, created = SpendingCategory.objects.get_or_create(
-                            name='Other',
-                            defaults={'description': 'Miscellaneous transactions'}
-                        )
+                        categorized_count += 1
+                else:
+                    # If AI returns 'Uncategorized', use 'Other' as fallback
+                    category, created = SpendingCategory.objects.get_or_create(
+                        name='Other',
+                        defaults={'description': 'Miscellaneous transactions'}
+                    )
+                    if not transaction.primary_category or transaction.primary_category.name != 'Other':
                         transaction.primary_category = category
                         transaction.save()
-                except Exception as e:
-                    print(f"Failed to categorize transaction {transaction.id}: {str(e)}")
-                    # Assign 'Other' as fallback
-                    try:
-                        category, created = SpendingCategory.objects.get_or_create(
-                            name='Other',
-                            defaults={'description': 'Miscellaneous transactions'}
-                        )
+                        categorized_count += 1
+            except Exception as e:
+                print(f"Failed to categorize transaction {transaction.id}: {transaction.name}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                # Assign 'Other' as fallback
+                try:
+                    category, created = SpendingCategory.objects.get_or_create(
+                        name='Other',
+                        defaults={'description': 'Miscellaneous transactions'}
+                    )
+                    if not transaction.primary_category:
                         transaction.primary_category = category
                         transaction.save()
-                    except:
-                        pass
+                except:
+                    pass
+            
+            print(f"Successfully re-categorized {categorized_count} transactions")
+        else:
+            print("All transactions are properly categorized")
         
         # Refresh transactions to get updated categories
         transactions = Transaction.objects.filter(
