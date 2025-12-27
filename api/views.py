@@ -1146,10 +1146,10 @@ def spending_summary(request):
                         pass
         
         # Refresh transactions to get updated categories
+        # Include BOTH expenses (negative) and income (positive) to calculate net spending
         transactions = Transaction.objects.filter(
             user=request.user,
-            date__range=[start_date, end_date],
-            amount__lt=0
+            date__range=[start_date, end_date]
         )
         
         # Group transactions by category and sum amounts
@@ -1159,6 +1159,9 @@ def spending_summary(request):
         ai_categorized_count = 0
         total_transactions = transactions.count()
         total_net = 0  # Track total net spending across all categories
+        
+        expense_count = 0
+        income_count = 0
         
         for transaction in transactions:
             category_name = transaction.primary_category.name if transaction.primary_category else 'Other'
@@ -1172,14 +1175,19 @@ def spending_summary(request):
                 amount_to_add = abs(transaction.amount)
                 summary[category_name] += amount_to_add
                 total_net += amount_to_add
+                expense_count += 1
             else:
                 # Income/refund (positive): SUBTRACT from spending
                 summary[category_name] -= transaction.amount
                 total_net -= transaction.amount
+                income_count += 1
             
             # Count transactions that were likely categorized by AI (not "Other" or "Uncategorized")
             if transaction.primary_category and transaction.primary_category.name not in ['Other', 'Uncategorized']:
                 ai_categorized_count += 1
+        
+        print(f"📊 Calculation summary: {expense_count} expenses, {income_count} income/refunds, Total Net: ${total_net:.2f}")
+        print(f"📊 Category totals: {summary}")
         
         # Sort by absolute amount (descending) for better UX
         summary = dict(sorted(summary.items(), key=lambda x: abs(x[1]), reverse=True))
