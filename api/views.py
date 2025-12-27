@@ -1157,24 +1157,23 @@ def spending_summary(request):
         # Sort by amount (descending) for better UX
         summary = dict(sorted(summary.items(), key=lambda x: x[1], reverse=True))
         
-        # Add debug info to response (only in debug mode or if requested)
-        debug_mode = request.query_params.get('debug') == 'true' or os.getenv('DEBUG', 'False').lower() == 'true'
-        
-        if debug_mode:
-            response_data = {
-                'summary': summary,
-                'debug': {
-                    'total_transactions': total_transactions,
-                    'ai_categorized_count': ai_categorized_count,
-                    'openai_key_configured': bool(os.getenv('OPENAI_API_KEY')),
-                    'transactions_fixed': len(transactions_to_fix) if 'transactions_to_fix' in locals() else 0,
-                    'categories': list(summary.keys())
-                }
+        # ALWAYS include debug info to help diagnose issues
+        openai_key = os.getenv('OPENAI_API_KEY')
+        response_data = {
+            'summary': summary,
+            'debug': {
+                'total_transactions': total_transactions,
+                'ai_categorized_count': ai_categorized_count,
+                'openai_key_configured': bool(openai_key),
+                'openai_key_preview': openai_key[:15] + '...' if openai_key else None,
+                'transactions_fixed': len(transactions_to_fix) if 'transactions_to_fix' in locals() else 0,
+                'categories': list(summary.keys()),
+                'uncategorized_count': len(uncategorized_transactions) if 'uncategorized_transactions' in locals() else 0,
+                'incorrectly_categorized_count': len(incorrectly_categorized_income) if 'incorrectly_categorized_income' in locals() else 0
             }
-            print(f"DEBUG: Returning spending summary with debug info. Categories: {list(summary.keys())}")
-        else:
-            response_data = summary
-            print(f"Returning spending summary without debug info. Categories: {list(summary.keys())}")
+        }
+        print(f"📊 Returning spending summary. Categories: {list(summary.keys())}")
+        print(f"🔑 OpenAI key configured: {bool(openai_key)}")
         
         return Response(response_data)
     except Exception as e:
