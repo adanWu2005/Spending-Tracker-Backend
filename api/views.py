@@ -775,6 +775,7 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
         
         # Always use AI to categorize based on transaction name
         # This ensures consistent, intelligent categorization
+        print(f"🔍 Processing transaction: {plaid_transaction.name} - Calling OpenAI categorization...")
         category_name = categorize_transaction_with_openai(
             plaid_transaction.name,
             merchant_name,
@@ -837,15 +838,16 @@ def categorize_transaction_with_openai(transaction_name, merchant_name, amount):
     """Categorize a transaction using OpenAI"""
     try:
         openai_api_key = os.getenv('OPENAI_API_KEY')
-        print(f"DEBUG: Checking for OPENAI_API_KEY... Found: {'Yes' if openai_api_key else 'No'}")
+        print(f"🔑 DEBUG: Checking for OPENAI_API_KEY... Found: {'Yes' if openai_api_key else 'No'}")
         if openai_api_key:
-            print(f"DEBUG: OPENAI_API_KEY starts with: {openai_api_key[:10]}...")
-        
-        if not openai_api_key:
-            print("WARNING: OPENAI_API_KEY not set in environment variables")
-            print(f"DEBUG: All env vars with 'OPENAI': {[k for k in os.environ.keys() if 'OPENAI' in k.upper()]}")
+            print(f"🔑 DEBUG: OPENAI_API_KEY starts with: {openai_api_key[:10]}...")
+            print(f"🔑 DEBUG: OPENAI_API_KEY length: {len(openai_api_key)}")
+        else:
+            print("❌ WARNING: OPENAI_API_KEY not set in environment variables")
+            print(f"🔍 DEBUG: All env vars with 'OPENAI': {[k for k in os.environ.keys() if 'OPENAI' in k.upper()]}")
             return 'Other'
         
+        print(f"🤖 Creating OpenAI client and making API call for: {transaction_name}")
         client = OpenAI(api_key=openai_api_key)
         
         # Determine if this is an expense (negative amount) or income (positive amount)
@@ -890,6 +892,7 @@ Examples:
 
 Respond with ONLY the category name (e.g., "Entertainment", "Transportation", "Shopping"), nothing else."""
         
+        print(f"📡 Making OpenAI API request...")
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -900,7 +903,9 @@ Respond with ONLY the category name (e.g., "Entertainment", "Transportation", "S
             temperature=0.1  # Lower temperature for more consistent categorization
         )
         
+        print(f"✅ OpenAI API call successful! Response received.")
         category = response.choices[0].message.content.strip()
+        print(f"📝 Raw OpenAI response: '{category}'")
         
         # Clean up the response - remove any extra text, quotes, or formatting
         category = category.replace('"', '').replace("'", '').strip()
@@ -960,7 +965,7 @@ Respond with ONLY the category name (e.g., "Entertainment", "Transportation", "S
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def categorize_transactions(request):
-    """Categorize transactions from the last 30 days using OpenAI"""
+    """Force re-categorize ALL transactions from the last 30 days using OpenAI"""
     try:
         # Get transactions from the last 30 days
         start_date = (timezone.now() - timedelta(days=30)).date()
@@ -972,19 +977,24 @@ def categorize_transactions(request):
             amount__lt=0  # Only expenses
         )
         
+        print(f"🔄 FORCE RE-CATEGORIZING {transactions.count()} transactions with OpenAI...")
+        
         # Re-categorize ALL transactions with OpenAI (not just uncategorized ones)
         # This ensures we use AI categories instead of Plaid categories
         categorized_count = 0
         failed_count = 0
+        openai_calls_made = 0
         
         for transaction in transactions:
             try:
+                print(f"🔄 Re-categorizing transaction {transaction.id}: {transaction.name}")
                 # Get or create the category using OpenAI
                 category_name = categorize_transaction_with_openai(
                     transaction.name,
                     transaction.merchant_name,
                     transaction.amount
                 )
+                openai_calls_made += 1
                 
                 if category_name and category_name != 'Uncategorized':
                     category, created = SpendingCategory.objects.get_or_create(
@@ -995,21 +1005,31 @@ def categorize_transactions(request):
                     transaction.primary_category = category
                     transaction.save()
                     categorized_count += 1
+                    print(f"✅ Categorized {transaction.name} as {category_name}")
                 else:
                     failed_count += 1
-                    print(f"Failed to get valid category for transaction {transaction.id}: {transaction.name}")
+                    print(f"❌ Failed to get valid category for transaction {transaction.id}: {transaction.name}")
             except Exception as e:
                 failed_count += 1
-                print(f"Error categorizing transaction {transaction.id}: {str(e)}")
+                print(f"❌ Error categorizing transaction {transaction.id}: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 continue
+        
+        print(f"✅ Re-categorization complete: {categorized_count} successful, {failed_count} failed, {openai_calls_made} OpenAI API calls made")
         
         return Response({
             'message': f'Successfully categorized {categorized_count} transactions',
             'categorized_count': categorized_count,
             'failed_count': failed_count,
-            'total_transactions': transactions.count()
+            'total_transactions': transactions.count(),
+            'openai_calls_made': openai_calls_made,
+            'openai_key_configured': bool(os.getenv('OPENAI_API_KEY'))
         })
     except Exception as e:
+        print(f"❌ Error in categorize_transactions: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
