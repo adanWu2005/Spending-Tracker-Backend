@@ -1050,12 +1050,11 @@ def spending_summary(request):
         if request.query_params.get('end_date'):
             end_date = datetime.strptime(request.query_params.get('end_date'), '%Y-%m-%d').date()
         
-        # Get all transactions from the last 30 days (expenses only)
-        # Transactions are now automatically categorized when synced, so they should all have categories
+        # Get all transactions from the last 30 days (both income and expenses)
+        # We'll handle both positive (income) and negative (expenses) amounts
         transactions = Transaction.objects.filter(
             user=request.user,
-            date__range=[start_date, end_date],
-            amount__lt=0  # Only expenses, not income
+            date__range=[start_date, end_date]
         )
         
         print(f"Found {transactions.count()} transactions in the last 30 days")
@@ -1154,15 +1153,26 @@ def spending_summary(request):
         )
         
         # Group transactions by category and sum amounts
+        # Spending summary should only include EXPENSES (negative amounts)
+        # Convert negative amounts to positive for display (spending amounts)
         summary = {}
         ai_categorized_count = 0
         total_transactions = transactions.count()
         
         for transaction in transactions:
+            # Only include expenses (negative amounts) in spending summary
+            # Income (positive amounts) should not be included in spending
+            if transaction.amount >= 0:
+                continue  # Skip income transactions
+                
             category_name = transaction.primary_category.name if transaction.primary_category else 'Other'
             if category_name not in summary:
                 summary[category_name] = 0
+            
+            # Expense (negative amount): convert to positive and add to spending
+            # This shows how much was spent in each category
             summary[category_name] += abs(transaction.amount)
+            
             # Count transactions that were likely categorized by AI (not "Other" or "Uncategorized")
             if transaction.primary_category and transaction.primary_category.name not in ['Other', 'Uncategorized']:
                 ai_categorized_count += 1
