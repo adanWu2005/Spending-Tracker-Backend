@@ -1153,32 +1153,36 @@ def spending_summary(request):
         )
         
         # Group transactions by category and sum amounts
-        # Spending summary should only include EXPENSES (negative amounts)
-        # Convert negative amounts to positive for display (spending amounts)
+        # EXPENSES (negative amounts): ADD to spending (convert to positive)
+        # INCOME (positive amounts): SUBTRACT from spending (they reduce net spending)
         summary = {}
         ai_categorized_count = 0
         total_transactions = transactions.count()
+        total_net = 0  # Track total net spending across all categories
         
         for transaction in transactions:
-            # Only include expenses (negative amounts) in spending summary
-            # Income (positive amounts) should not be included in spending
-            if transaction.amount >= 0:
-                continue  # Skip income transactions
-                
             category_name = transaction.primary_category.name if transaction.primary_category else 'Other'
             if category_name not in summary:
                 summary[category_name] = 0
             
-            # Expense (negative amount): convert to positive and add to spending
-            # This shows how much was spent in each category
-            summary[category_name] += abs(transaction.amount)
+            # CRITICAL: Negative amounts (expenses) ADD to spending
+            # Positive amounts (income/refunds) SUBTRACT from spending
+            if transaction.amount < 0:
+                # Expense (negative): convert to positive and ADD
+                amount_to_add = abs(transaction.amount)
+                summary[category_name] += amount_to_add
+                total_net += amount_to_add
+            else:
+                # Income/refund (positive): SUBTRACT from spending
+                summary[category_name] -= transaction.amount
+                total_net -= transaction.amount
             
             # Count transactions that were likely categorized by AI (not "Other" or "Uncategorized")
             if transaction.primary_category and transaction.primary_category.name not in ['Other', 'Uncategorized']:
                 ai_categorized_count += 1
         
-        # Sort by amount (descending) for better UX
-        summary = dict(sorted(summary.items(), key=lambda x: x[1], reverse=True))
+        # Sort by absolute amount (descending) for better UX
+        summary = dict(sorted(summary.items(), key=lambda x: abs(x[1]), reverse=True))
         
         # ALWAYS include debug info to help diagnose issues
         openai_key = os.getenv('OPENAI_API_KEY')
