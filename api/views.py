@@ -868,20 +868,22 @@ Transaction Details:
 - Amount: ${amount_abs:.2f}
 - Type: {'Expense' if is_expense else 'Income'}
 
-Available Categories (choose the BEST match):
-1. Food & Dining - Restaurants, cafes, fast food, grocery stores, food delivery services
-2. Shopping - Retail stores, online shopping, department stores, clothing stores, electronics, drug stores
-3. Transportation - Gas stations, parking, public transit, rideshare (Uber, Lyft), car services, tolls
-4. Bills & Utilities - Electricity, water, gas, internet, phone, cable, utility companies
-5. Entertainment - Movies, concerts, sports events, recreation centers, gyms, streaming services (Netflix, Spotify), games, sports activities (basketball, soccer, etc.), amusement parks, recreation facilities
-6. Healthcare - Doctor visits, hospitals, pharmacies, medical expenses, dental, vision
-7. Travel - Hotels, flights, airlines, vacation rentals, travel agencies
-8. Banking & Financial - Bank fees, ATM withdrawals, transfers, investment services, financial services
-9. Education - Tuition, schools, universities, books, courses, educational services
-10. Home & Garden - Home improvement stores, furniture stores, hardware stores, garden centers
-11. Personal Care - Salons, spas, barbershops, personal hygiene products, cosmetics
+Available Categories (choose the BEST match - AVOID "Other" unless absolutely necessary):
+1. Food & Dining - Restaurants, cafes, fast food, grocery stores, food delivery services, coffee shops, bars
+2. Shopping - Retail stores, online shopping, department stores, clothing stores, electronics, drug stores, convenience stores
+3. Transportation - Gas stations, parking, public transit, rideshare (Uber, Lyft), car services, tolls, vehicle maintenance
+4. Bills & Utilities - Electricity, water, gas, internet, phone, cable, utility companies, subscriptions
+5. Entertainment - Movies, concerts, sports events, recreation centers, gyms, streaming services (Netflix, Spotify), games, sports activities (basketball, soccer, etc.), amusement parks, recreation facilities, hobbies
+6. Healthcare - Doctor visits, hospitals, pharmacies, medical expenses, dental, vision, health insurance
+7. Travel - Hotels, flights, airlines, vacation rentals, travel agencies, car rentals
+8. Banking & Financial - Bank fees, ATM withdrawals, transfers, investment services, financial services, loan payments
+9. Education - Tuition, schools, universities, books, courses, educational services, training
+10. Home & Garden - Home improvement stores, furniture stores, hardware stores, garden centers, home supplies
+11. Personal Care - Salons, spas, barbershops, personal hygiene products, cosmetics, beauty services
 12. Gifts & Donations - Charity organizations, gift purchases, donations
-13. Other - Anything that doesn't clearly fit the above categories
+13. Other - ONLY use this if the transaction truly doesn't fit any of the above categories
+
+IMPORTANT: Be specific! Most transactions should fit into categories 1-12. Only use "Other" as a last resort.
 
 Examples:
 - "REDDOT BASKETBALL" or any sports/recreation facility = Entertainment
@@ -1058,19 +1060,24 @@ def spending_summary(request):
         
         print(f"Found {transactions.count()} transactions in the last 30 days")
         
-        # Re-categorize transactions that are incorrectly categorized:
+        # AUTOMATICALLY RE-CATEGORIZE ALL TRANSACTIONS to ensure proper AI categorization
+        # Re-categorize:
         # 1. Uncategorized transactions
-        # 2. Expense transactions incorrectly categorized as "Income" (regardless of amount sign)
-        # 3. Transactions with names that suggest they're mis-categorized
+        # 2. Transactions categorized as "Income" (expenses shouldn't be income)
+        # 3. Transactions categorized as "Other" (they need proper categorization)
+        # 4. Transactions with names that suggest they're mis-categorized
         uncategorized_transactions = [t for t in transactions if not t.primary_category]
-        # Since we're filtering for expenses (amount < 0), any transaction categorized as "Income" is wrong
         incorrectly_categorized_income = [
             t for t in transactions 
             if t.primary_category and t.primary_category.name == 'Income'
         ]
+        # Re-categorize ALL transactions in "Other" category - they need proper AI categorization
+        other_category_transactions = [
+            t for t in transactions 
+            if t.primary_category and t.primary_category.name == 'Other'
+        ]
         
         # Check for transactions that are likely mis-categorized based on their names
-        # This catches cases like "REDDOT BASKETBALL" categorized as "Income" or "Other"
         potentially_miscategorized = []
         for t in transactions:
             if t.primary_category and t.amount < 0:  # Only check expenses
@@ -1093,10 +1100,16 @@ def spending_summary(request):
                         potentially_miscategorized.append(t)
         
         # Combine all transactions that need fixing, removing duplicates
-        transactions_to_fix = list(set(uncategorized_transactions + incorrectly_categorized_income + potentially_miscategorized))
+        # IMPORTANT: Include all "Other" category transactions to force re-categorization
+        transactions_to_fix = list(set(uncategorized_transactions + incorrectly_categorized_income + other_category_transactions + potentially_miscategorized))
         
         if transactions_to_fix:
-            print(f"Found {len(transactions_to_fix)} transactions to categorize/fix ({len(uncategorized_transactions)} uncategorized, {len(incorrectly_categorized_income)} incorrectly as Income, {len(potentially_miscategorized)} potentially miscategorized), categorizing with AI...")
+            print(f"🔍 Found {len(transactions_to_fix)} transactions to categorize/fix:")
+            print(f"   - {len(uncategorized_transactions)} uncategorized")
+            print(f"   - {len(incorrectly_categorized_income)} incorrectly as Income")
+            print(f"   - {len(other_category_transactions)} in 'Other' category (will be re-categorized)")
+            print(f"   - {len(potentially_miscategorized)} potentially miscategorized")
+            print(f"🔄 Starting AI re-categorization...")
             for transaction in transactions_to_fix:
                 try:
                     category_name = categorize_transaction_with_openai(
