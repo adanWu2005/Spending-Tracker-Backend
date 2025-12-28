@@ -434,6 +434,11 @@ class TransactionList(generics.ListAPIView):
         keyword = self.request.query_params.get('keyword')
         if keyword:
             queryset = queryset.filter(name__icontains=keyword)
+        
+        # Filter by category if provided
+        category = self.request.query_params.get('category')
+        if category:
+            queryset = queryset.filter(primary_category__name=category)
             
         return queryset
 
