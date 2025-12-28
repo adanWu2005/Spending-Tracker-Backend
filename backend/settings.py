@@ -176,28 +176,8 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# CORS Configuration
-# When credentials are allowed, must specify exact origins (cannot use CORS_ALLOW_ALL_ORIGINS)
-CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = [
-    "https://finflow-frontend-9de3aa5801c7.herokuapp.com",
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3000",
-]
-
-# Allow additional headers and methods
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-]
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOWS_CREDENTIALS = True
 
 # Plaid Configuration
 PLAID_CLIENT_ID = os.getenv('PLAID_CLIENT_ID')
