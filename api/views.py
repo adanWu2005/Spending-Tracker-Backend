@@ -1126,29 +1126,37 @@ def spending_summary(request):
         
         # Check for transactions that are likely mis-categorized based on their names
         potentially_miscategorized = []
+        e_transfer_transactions = []
         for t in transactions:
-            if t.primary_category and t.amount < 0:  # Only check expenses
-                name_lower = t.name.lower()
-                current_category = t.primary_category.name.lower() if t.primary_category else ''
-                
-                # Sports/recreation facilities should be Entertainment
-                if ('basketball' in name_lower or 'sport' in name_lower or 'recreation' in name_lower or 
-                    'gym' in name_lower or 'fitness' in name_lower or 'reddot' in name_lower or
-                    'athletic' in name_lower or 'arena' in name_lower or 'stadium' in name_lower):
-                    if current_category not in ['entertainment']:
-                        potentially_miscategorized.append(t)
-                # Uber/Lyft should be Transportation
-                elif ('uber' in name_lower or 'lyft' in name_lower or 'taxi' in name_lower):
-                    if current_category not in ['transportation']:
-                        potentially_miscategorized.append(t)
-                # Drug stores/pharmacies should be Shopping (unless medical-related)
-                elif ('shoppers' in name_lower or ('drug' in name_lower and 'mart' in name_lower)):
-                    if current_category not in ['shopping', 'healthcare']:
-                        potentially_miscategorized.append(t)
+            name_lower = t.name.lower()
+            current_category = t.primary_category.name.lower() if t.primary_category else ''
+            
+            # E-Transfer transactions should always be E-Transfer category (check ALL transactions)
+            if 'e transfer' in name_lower or 'etrnsfr' in name_lower or 'etransfer' in name_lower:
+                if current_category != 'e-transfer':
+                    e_transfer_transactions.append(t)
+                    continue  # Skip other checks for E-Transfer transactions
+            
+            # Only check other patterns for transactions that have a category and are expenses
+            if t.primary_category and t.amount < 0:
+                    # Sports/recreation facilities should be Entertainment
+                    if ('basketball' in name_lower or 'sport' in name_lower or 'recreation' in name_lower or 
+                        'gym' in name_lower or 'fitness' in name_lower or 'reddot' in name_lower or
+                        'athletic' in name_lower or 'arena' in name_lower or 'stadium' in name_lower):
+                        if current_category not in ['entertainment']:
+                            potentially_miscategorized.append(t)
+                    # Uber/Lyft should be Transportation
+                    elif ('uber' in name_lower or 'lyft' in name_lower or 'taxi' in name_lower):
+                        if current_category not in ['transportation']:
+                            potentially_miscategorized.append(t)
+                    # Drug stores/pharmacies should be Shopping (unless medical-related)
+                    elif ('shoppers' in name_lower or ('drug' in name_lower and 'mart' in name_lower)):
+                        if current_category not in ['shopping', 'healthcare']:
+                            potentially_miscategorized.append(t)
         
         # Combine all transactions that need fixing, removing duplicates
         # IMPORTANT: Include all "Other" category transactions to force re-categorization
-        transactions_to_fix = list(set(uncategorized_transactions + incorrectly_categorized_income + other_category_transactions + potentially_miscategorized))
+        transactions_to_fix = list(set(uncategorized_transactions + incorrectly_categorized_income + other_category_transactions + potentially_miscategorized + e_transfer_transactions))
         
         if transactions_to_fix:
             print(f"🔍 Found {len(transactions_to_fix)} transactions to categorize/fix:")
@@ -1156,6 +1164,7 @@ def spending_summary(request):
             print(f"   - {len(incorrectly_categorized_income)} incorrectly as Income")
             print(f"   - {len(other_category_transactions)} in 'Other' category (will be re-categorized)")
             print(f"   - {len(potentially_miscategorized)} potentially miscategorized")
+            print(f"   - {len(e_transfer_transactions)} E-Transfer transactions (will be re-categorized)")
             print(f"🔄 Starting AI re-categorization...")
             for transaction in transactions_to_fix:
                 try:
