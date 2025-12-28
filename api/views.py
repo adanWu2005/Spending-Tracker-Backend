@@ -22,7 +22,7 @@ from .tasks import send_verification_email
 
 # Create your views here.
 
-@api_view(['GET'])
+@api_view(['GET', 'OPTIONS'])
 @permission_classes([AllowAny])
 def api_root(request):
     """API root endpoint that lists available endpoints"""
@@ -317,7 +317,7 @@ def delete_unverified_user(request):
             'error': 'Error deleting user'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-@api_view(['POST'])
+@api_view(['POST', 'OPTIONS'])
 @permission_classes([AllowAny])
 def login_view(request):
     """Custom login view that accepts username or email"""

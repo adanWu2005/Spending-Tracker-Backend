@@ -177,13 +177,18 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # CORS Configuration
+# Allow all origins - CORS middleware will handle it
+# Note: When CORS_ALLOW_ALL_ORIGINS is True, CORS_ALLOWED_ORIGINS is ignored
 CORS_ALLOW_ALL_ORIGINS = True
-CORS_ALLOW_CREDENTIALS = True  # Fixed typo: was CORS_ALLOWS_CREDENTIALS
+CORS_ALLOW_CREDENTIALS = True
+
+# Explicit origins list (used when CORS_ALLOW_ALL_ORIGINS is False)
 CORS_ALLOWED_ORIGINS = [
     "https://finflow-frontend-9de3aa5801c7.herokuapp.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
 ]
+
 CORS_ALLOW_METHODS = [
     'DELETE',
     'GET',
@@ -203,6 +208,9 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
 ]
+
+# Ensure CORS preflight requests are handled
+CORS_PREFLIGHT_MAX_AGE = 86400
 
 # Plaid Configuration
 PLAID_CLIENT_ID = os.getenv('PLAID_CLIENT_ID')
