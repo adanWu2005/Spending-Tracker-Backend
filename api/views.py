@@ -434,11 +434,6 @@ class TransactionList(generics.ListAPIView):
         keyword = self.request.query_params.get('keyword')
         if keyword:
             queryset = queryset.filter(name__icontains=keyword)
-        
-        # Filter by category if provided
-        category = self.request.query_params.get('category')
-        if category:
-            queryset = queryset.filter(primary_category__name=category)
             
         return queryset
 
@@ -1046,7 +1041,7 @@ def spending_summary(request):
     """Get spending summary by category using AI-categorized transactions from the last 30 days"""
     try:
         # Always use last 30 days as default for spending summary
-        end_date = timezone.now().date()
+            end_date = timezone.now().date()
         start_date = (timezone.now() - timedelta(days=30)).date()
         
         # Allow override via query params if needed
