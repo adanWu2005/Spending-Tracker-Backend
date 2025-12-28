@@ -809,14 +809,20 @@ def _process_transaction(user, plaid_transaction, plaid_service, update=False):
         transaction_type = getattr(plaid_transaction, 'transaction_type', None)
         pending = getattr(plaid_transaction, 'pending', False)
         
-        # Always use AI to categorize based on transaction name
-        # This ensures consistent, intelligent categorization
-        print(f"🔍 Processing transaction: {plaid_transaction.name} - Calling OpenAI categorization...")
-        category_name = categorize_transaction_with_openai(
-            plaid_transaction.name,
-            merchant_name,
-            plaid_transaction.amount
-        )
+        # Check for E-Transfer transactions first (before AI categorization)
+        transaction_name_lower = plaid_transaction.name.lower()
+        if 'e transfer' in transaction_name_lower or 'etrnsfr' in transaction_name_lower or 'etransfer' in transaction_name_lower:
+            category_name = 'E-Transfer'
+            print(f"🔍 Processing transaction: {plaid_transaction.name} - Detected as E-Transfer")
+        else:
+            # Always use AI to categorize based on transaction name
+            # This ensures consistent, intelligent categorization
+            print(f"🔍 Processing transaction: {plaid_transaction.name} - Calling OpenAI categorization...")
+            category_name = categorize_transaction_with_openai(
+                plaid_transaction.name,
+                merchant_name,
+                plaid_transaction.amount
+            )
         
         # If AI returns 'Uncategorized', use 'Other' as fallback
         if not category_name or category_name == 'Uncategorized':
@@ -1026,12 +1032,18 @@ def categorize_transactions(request):
         for transaction in transactions:
             try:
                 print(f"🔄 Re-categorizing transaction {transaction.id}: {transaction.name}")
-                # Get or create the category using OpenAI
-                category_name = categorize_transaction_with_openai(
-                    transaction.name,
-                    transaction.merchant_name,
-                    transaction.amount
-                )
+                # Check for E-Transfer transactions first (before AI categorization)
+                transaction_name_lower = transaction.name.lower()
+                if 'e transfer' in transaction_name_lower or 'etrnsfr' in transaction_name_lower or 'etransfer' in transaction_name_lower:
+                    category_name = 'E-Transfer'
+                    print(f"   Detected as E-Transfer")
+                else:
+                    # Get or create the category using OpenAI
+                    category_name = categorize_transaction_with_openai(
+                        transaction.name,
+                        transaction.merchant_name,
+                        transaction.amount
+                    )
                 openai_calls_made += 1
                 
                 if category_name and category_name != 'Uncategorized':
@@ -1147,11 +1159,17 @@ def spending_summary(request):
             print(f"🔄 Starting AI re-categorization...")
             for transaction in transactions_to_fix:
                 try:
-                    category_name = categorize_transaction_with_openai(
-                        transaction.name,
-                        transaction.merchant_name,
-                        transaction.amount
-                    )
+                    # Check for E-Transfer transactions first (before AI categorization)
+                    transaction_name_lower = transaction.name.lower()
+                    if 'e transfer' in transaction_name_lower or 'etrnsfr' in transaction_name_lower or 'etransfer' in transaction_name_lower:
+                        category_name = 'E-Transfer'
+                        print(f"   Detected {transaction.name} as E-Transfer")
+                    else:
+                        category_name = categorize_transaction_with_openai(
+                            transaction.name,
+                            transaction.merchant_name,
+                            transaction.amount
+                        )
                     
                     if category_name and category_name != 'Uncategorized':
                         category, created = SpendingCategory.objects.get_or_create(
