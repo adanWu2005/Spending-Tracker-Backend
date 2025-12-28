@@ -321,13 +321,40 @@ def delete_unverified_user(request):
 @permission_classes([AllowAny])
 def login_view(request):
     """Custom login view that accepts username or email"""
+    # Get the origin from the request
+    origin = request.META.get('HTTP_ORIGIN', '*')
+    allowed_origins = [
+        'https://finflow-frontend-9de3aa5801c7.herokuapp.com',
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+    ]
+    
+    # Use the request origin if it's in the allowed list, otherwise use the first allowed origin
+    if origin in allowed_origins:
+        cors_origin = origin
+    else:
+        cors_origin = allowed_origins[0] if allowed_origins else '*'
+    
+    # Handle OPTIONS preflight request
+    if request.method == 'OPTIONS':
+        response = Response()
+        response['Access-Control-Allow-Origin'] = cors_origin
+        response['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        response['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response['Access-Control-Allow-Credentials'] = 'true'
+        response['Access-Control-Max-Age'] = '86400'
+        return response
+    
     username_or_email = request.data.get('username')
     password = request.data.get('password')
     
     if not username_or_email or not password:
-        return Response({
+        response = Response({
             'error': 'Please provide both username/email and password'
         }, status=status.HTTP_400_BAD_REQUEST)
+        response['Access-Control-Allow-Origin'] = cors_origin
+        response['Access-Control-Allow-Credentials'] = 'true'
+        return response
     
     # Try to authenticate with username first, then email
     user = authenticate(username=username_or_email, password=password)
@@ -344,22 +371,31 @@ def login_view(request):
     
     if user:
         if not user.is_active:
-            return Response({
+            response = Response({
                 'error': 'Account not verified. Please check your email for verification code or register again.',
                 'needs_verification': True,
                 'user_id': user.id,
                 'email': user.email
             }, status=status.HTTP_401_UNAUTHORIZED)
+            response['Access-Control-Allow-Origin'] = cors_origin
+            response['Access-Control-Allow-Credentials'] = 'true'
+            return response
         
         refresh = RefreshToken.for_user(user)
-        return Response({
+        response = Response({
             'access': str(refresh.access_token),
             'refresh': str(refresh),
         })
+        response['Access-Control-Allow-Origin'] = cors_origin
+        response['Access-Control-Allow-Credentials'] = 'true'
+        return response
     else:
-        return Response({
+        response = Response({
             'error': 'Invalid credentials'
         }, status=status.HTTP_401_UNAUTHORIZED)
+        response['Access-Control-Allow-Origin'] = cors_origin
+        response['Access-Control-Allow-Credentials'] = 'true'
+        return response
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
@@ -1041,7 +1077,7 @@ def spending_summary(request):
     """Get spending summary by category using AI-categorized transactions from the last 30 days"""
     try:
         # Always use last 30 days as default for spending summary
-            end_date = timezone.now().date()
+        end_date = timezone.now().date()
         start_date = (timezone.now() - timedelta(days=30)).date()
         
         # Allow override via query params if needed
