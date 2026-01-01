@@ -1281,46 +1281,6 @@ def spending_summary(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
-def test_openai_key(request):
-    """Test endpoint to check if OpenAI API key is loaded correctly"""
-    import os
-    openai_api_key = os.getenv('OPENAI_API_KEY')
-    
-    result = {
-        'openai_key_found': bool(openai_api_key),
-        'openai_key_preview': openai_api_key[:10] + '...' if openai_api_key else None,
-        'openai_key_length': len(openai_api_key) if openai_api_key else 0,
-    }
-    
-    # Try to make a test API call
-    if openai_api_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(api_key=openai_api_key)
-            # Make a minimal test call
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": "Say 'test'"}],
-                max_tokens=5
-            )
-            result['openai_test_successful'] = True
-            result['openai_response'] = response.choices[0].message.content.strip()
-        except Exception as e:
-            result['openai_test_successful'] = False
-            result['openai_error'] = str(e)
-    else:
-        result['openai_test_successful'] = False
-        result['openai_error'] = 'No API key found'
-    
-    # Show all environment variables with 'OPENAI' in the name
-    result['env_vars_with_openai'] = {k: v[:10] + '...' if len(v) > 10 else v 
-                                      for k, v in os.environ.items() 
-                                      if 'OPENAI' in k.upper()}
-    
-    return Response(result)
-
-@api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def debug_transactions(request):
     """Debug endpoint to see transaction details and categories"""

@@ -13,7 +13,6 @@ urlpatterns = [
     path('check-user-status/', views.check_user_status, name='check-user-status'),
     path('delete-unverified-user/', views.delete_unverified_user, name='delete-unverified-user'),
     path('test-email/', views.test_email, name='test-email'),
-    path('test-openai-key/', views.test_openai_key, name='test-openai-key'),
     
     # User Profile
     path('profile/', views.UserProfileView.as_view(), name='profile'),
