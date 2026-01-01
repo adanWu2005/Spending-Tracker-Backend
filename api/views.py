@@ -1086,13 +1086,24 @@ def categorize_transactions(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def spending_summary(request):
-    """Get spending summary by category using AI-categorized transactions from the last 30 days"""
+    """Get spending summary by category using AI-categorized transactions for a specified number of days"""
     try:
-        # Always use last 30 days as default for spending summary
-        end_date = timezone.now().date()
-        start_date = (timezone.now() - timedelta(days=30)).date()
+        # Get days parameter from query string, default to 30 days
+        days = 30
+        days_param = request.query_params.get('days')
+        if days_param:
+            try:
+                days = int(days_param)
+                # Validate days parameter (allow 7, 14, 30, 60)
+                if days not in [7, 14, 30, 60]:
+                    days = 30  # Default to 30 if invalid value
+            except (ValueError, TypeError):
+                days = 30  # Default to 30 if conversion fails
         
-        # Allow override via query params if needed
+        end_date = timezone.now().date()
+        start_date = (timezone.now() - timedelta(days=days)).date()
+        
+        # Allow override via query params if needed (takes precedence over days)
         if request.query_params.get('start_date'):
             start_date = datetime.strptime(request.query_params.get('start_date'), '%Y-%m-%d').date()
         if request.query_params.get('end_date'):
@@ -1105,7 +1116,7 @@ def spending_summary(request):
             date__range=[start_date, end_date]
         )
         
-        print(f"Found {transactions.count()} transactions in the last 30 days")
+        print(f"Found {transactions.count()} transactions in the last {days} days")
         
         # AUTOMATICALLY RE-CATEGORIZE ALL TRANSACTIONS to ensure proper AI categorization
         # Re-categorize:
