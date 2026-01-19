@@ -19,6 +19,7 @@ from .serializer import (
 from .models import UserProfile, BankAccount, SpendingCategory, Transaction, VerificationCode
 from .plaid_service import PlaidService
 from .tasks import send_verification_email
+from .permissions import IsAdminUser
 
 # Create your views here.
 
@@ -138,9 +139,9 @@ class CreateUser(generics.CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 @api_view(['GET'])
-@permission_classes([AllowAny])
+@permission_classes([IsAdminUser])
 def test_email(request):
-    """Test email configuration"""
+    """Test email configuration - Admin only"""
     try:
         from django.core.mail import send_mail
         from django.conf import settings
@@ -169,7 +170,16 @@ def verify_email(request):
         }, status=status.HTTP_400_BAD_REQUEST)
     
     try:
+        # Validate user_id is a valid integer to prevent injection
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            return Response({
+                'error': 'Invalid user ID format'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         user = User.objects.get(id=user_id, is_active=False)
+        # Security: Verify the code belongs to this specific user
         verification_code = VerificationCode.objects.filter(
             user=user,
             code=code,
@@ -184,6 +194,12 @@ def verify_email(request):
         if verification_code.is_expired():
             return Response({
                 'error': 'Verification code has expired'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Additional security: Ensure the verification code email matches the user's email
+        if verification_code.email != user.email:
+            return Response({
+                'error': 'Verification code does not match user'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Mark code as used
@@ -211,16 +227,37 @@ def verify_email(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def resend_verification(request):
-    """Resend verification code"""
+    """Resend verification code - requires email verification for security"""
     user_id = request.data.get('user_id')
+    email = request.data.get('email')
     
     if not user_id:
         return Response({
             'error': 'User ID is required'
         }, status=status.HTTP_400_BAD_REQUEST)
     
+    # Security: Require email to prevent IDOR - user must provide their email
+    if not email:
+        return Response({
+            'error': 'Email is required for security verification'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
     try:
+        # Validate user_id is a valid integer to prevent injection
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            return Response({
+                'error': 'Invalid user ID format'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         user = User.objects.get(id=user_id, is_active=False)
+        
+        # Security: Verify the email matches the user's email to prevent IDOR
+        if user.email.lower() != email.lower():
+            return Response({
+                'error': 'Email does not match user account'
+            }, status=status.HTTP_403_FORBIDDEN)
         
         # Create new verification code
         verification_code = VerificationCode.objects.create(
@@ -284,16 +321,37 @@ def check_user_status(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def delete_unverified_user(request):
-    """Delete an unverified user account"""
+    """Delete an unverified user account - requires email verification for security"""
     user_id = request.data.get('user_id')
+    email = request.data.get('email')
     
     if not user_id:
         return Response({
             'error': 'User ID is required'
         }, status=status.HTTP_400_BAD_REQUEST)
     
+    # Security: Require email to prevent IDOR - user must provide their email
+    if not email:
+        return Response({
+            'error': 'Email is required for security verification'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
     try:
+        # Validate user_id is a valid integer to prevent injection
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            return Response({
+                'error': 'Invalid user ID format'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         user = User.objects.get(id=user_id, is_active=False)
+        
+        # Security: Verify the email matches the user's email to prevent IDOR
+        if user.email.lower() != email.lower():
+            return Response({
+                'error': 'Email does not match user account'
+            }, status=status.HTTP_403_FORBIDDEN)
         
         # Delete verification codes
         VerificationCode.objects.filter(user=user).delete()
@@ -442,9 +500,11 @@ class TransactionList(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        # Security: Always filter by user first to prevent IDOR
         queryset = Transaction.objects.filter(user=self.request.user)
         
         # Filter by date range if provided
+        # Django ORM automatically parameterizes these queries - safe from SQL injection
         start_date = self.request.query_params.get('start_date')
         end_date = self.request.query_params.get('end_date')
         
@@ -454,9 +514,21 @@ class TransactionList(generics.ListAPIView):
             queryset = queryset.filter(date__lte=end_date)
         
         # Filter by account if provided
+        # Security: account_id is validated by Django ORM and filtered by user's transactions
+        # This prevents IDOR because the account must belong to the user's transactions
         account_id = self.request.query_params.get('account_id')
         if account_id:
-            queryset = queryset.filter(account_id=account_id)
+            # Validate account_id is numeric to prevent injection
+            try:
+                account_id = int(account_id)
+                # Additional security: Verify account belongs to user
+                if not BankAccount.objects.filter(id=account_id, user=self.request.user).exists():
+                    # Return empty queryset if account doesn't belong to user
+                    return Transaction.objects.none()
+                queryset = queryset.filter(account_id=account_id)
+            except (ValueError, TypeError):
+                # Invalid account_id format - return empty queryset
+                return Transaction.objects.none()
         
         # Filter by transaction type (income/expense) if provided
         transaction_type = self.request.query_params.get('transaction_type')
@@ -467,6 +539,7 @@ class TransactionList(generics.ListAPIView):
                 queryset = queryset.filter(amount__lt=0)
         
         # Filter by keyword search in transaction name if provided
+        # Django ORM's icontains automatically escapes user input - safe from SQL injection
         keyword = self.request.query_params.get('keyword')
         if keyword:
             queryset = queryset.filter(name__icontains=keyword)
@@ -1351,9 +1424,9 @@ def get_consent_status(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdminUser])
 def security_audit(request):
-    """Perform basic security audit and update tracking"""
+    """Perform basic security audit and update tracking - Admin only"""
     try:
         user_profile, created = UserProfile.objects.get_or_create(user=request.user)
         
@@ -1373,9 +1446,9 @@ def security_audit(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdminUser])
 def security_status(request):
-    """Get current security status and policy information"""
+    """Get current security status and policy information - Admin only"""
     try:
         user_profile, created = UserProfile.objects.get_or_create(user=request.user)
         
@@ -1398,9 +1471,9 @@ def security_status(request):
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAdminUser])
 def security_attestations(request):
-    """Get security attestations status"""
+    """Get security attestations status - Admin only"""
     try:
         from .models import DataRetentionPolicy, AccessProvisioning, ZeroTrustArchitecture, CentralizedIAM
         
