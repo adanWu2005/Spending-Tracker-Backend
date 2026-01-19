@@ -16,10 +16,11 @@ import os
 from openai import OpenAI
 from .serializer import (
     User_Serialzier, UserProfileSerializer, BankAccountSerializer,
-    SpendingCategorySerializer, TransactionSerializer, APIKeySerializer
+    SpendingCategorySerializer, TransactionSerializer
 )
-from .models import UserProfile, BankAccount, SpendingCategory, Transaction, VerificationCode, APIKey
+from .models import UserProfile, BankAccount, SpendingCategory, Transaction, VerificationCode
 from .plaid_service import PlaidService
+from .plaid_rate_limiter import PlaidRateLimiter
 from .tasks import send_verification_email
 from .permissions import IsAdminUser
 
@@ -583,10 +584,21 @@ def create_link_token(request):
             }, status=status.HTTP_404_NOT_FOUND)
         
         print(f"Creating link token for user: {request.user.id}")
-        plaid_service = PlaidService()
-        link_token = plaid_service.create_link_token(request.user.id)
-        print(f"Link token created: {link_token[:20]}..." if link_token else "No token")
-        return Response({'link_token': link_token})
+        try:
+            plaid_service = PlaidService()
+            link_token = plaid_service.create_link_token(request.user.id)
+            print(f"Link token created: {link_token[:20]}..." if link_token else "No token")
+            return Response({'link_token': link_token})
+        except Exception as e:
+            error_msg = str(e)
+            # Check if it's a rate limit error
+            if 'rate limit' in error_msg.lower():
+                return Response({
+                    'error': 'Plaid API rate limit exceeded',
+                    'message': error_msg,
+                    'rate_limit_exceeded': True
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            raise
     except Exception as e:
         print(f"Error creating link token: {str(e)}")
         return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -621,17 +633,36 @@ def exchange_token(request):
             return Response({'error': 'public_token is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         print("Initializing PlaidService...")
-        plaid_service = PlaidService()
-        
-        print("Exchanging public token...")
         try:
-            access_token, item_id = plaid_service.exchange_public_token(public_token)
-            print(f"Token exchange successful. Access token: {access_token[:20]}..., Item ID: {item_id}")
-        except Exception as plaid_error:
-            print(f"Plaid token exchange error: {str(plaid_error)}")
-            import traceback
-            traceback.print_exc()
-            return Response({'error': f'Plaid token exchange failed: {str(plaid_error)}'}, status=status.HTTP_400_BAD_REQUEST)
+            plaid_service = PlaidService()
+            
+            print("Exchanging public token...")
+            try:
+                access_token, item_id = plaid_service.exchange_public_token(public_token)
+                print(f"Token exchange successful. Access token: {access_token[:20]}..., Item ID: {item_id}")
+            except Exception as plaid_error:
+                error_msg = str(plaid_error)
+                # Check if it's a rate limit error
+                if 'rate limit' in error_msg.lower():
+                    print(f"Plaid rate limit exceeded: {error_msg}")
+                    return Response({
+                        'error': 'Plaid API rate limit exceeded',
+                        'message': error_msg,
+                        'rate_limit_exceeded': True
+                    }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+                print(f"Plaid token exchange error: {error_msg}")
+                import traceback
+                traceback.print_exc()
+                return Response({'error': f'Plaid token exchange failed: {error_msg}'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            error_msg = str(e)
+            if 'rate limit' in error_msg.lower():
+                return Response({
+                    'error': 'Plaid API rate limit exceeded',
+                    'message': error_msg,
+                    'rate_limit_exceeded': True
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+            raise
 
         # Update user profile with Plaid tokens
         # Reset the transaction cursor if the item or access token changed to avoid
@@ -754,6 +785,7 @@ def sync_transactions(request):
         # Loop until all pages are fetched
         while True:
             try:
+                # Rate limiting is handled inside sync_transactions
                 sync_response = plaid_service.sync_transactions(user_profile.plaid_access_token, current_cursor)
             except Exception as sync_error:
                 from plaid.exceptions import ApiException as PlaidApiException
@@ -844,8 +876,18 @@ def sync_transactions(request):
         # Update account balances after syncing transactions
         print("Updating account balances...")
         try:
-            accounts = plaid_service.get_accounts(user_profile.plaid_access_token)
-            print(f"Retrieved {len(accounts)} accounts from Plaid for balance update")
+            try:
+                accounts = plaid_service.get_accounts(user_profile.plaid_access_token)
+                print(f"Retrieved {len(accounts)} accounts from Plaid for balance update")
+            except Exception as balance_error:
+                error_msg = str(balance_error)
+                if 'rate limit' in error_msg.lower():
+                    print(f"Plaid rate limit exceeded during balance update: {error_msg}")
+                    # Don't fail the entire sync if balance update hits rate limit
+                    print("Skipping balance update due to rate limit")
+                    accounts = []
+                else:
+                    raise
             
             for account in accounts:
                 try:

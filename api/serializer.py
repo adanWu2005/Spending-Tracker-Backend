@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import UserProfile, BankAccount, SpendingCategory, Transaction, APIKey
+from .models import UserProfile, BankAccount, SpendingCategory, Transaction
 
 class User_Serialzier(serializers.ModelSerializer):
     class Meta:
@@ -66,23 +66,6 @@ class TransactionSerializer(serializers.ModelSerializer):
 
     def get_account_name(self, obj):
         return obj.account.name
-
-
-class APIKeySerializer(serializers.ModelSerializer):
-    """Serializer for API Key model"""
-    key = serializers.CharField(read_only=True, help_text="The API key (only shown on creation)")
-    user = serializers.PrimaryKeyRelatedField(read_only=True)
-    is_expired = serializers.BooleanField(read_only=True)
-    is_valid = serializers.BooleanField(read_only=True)
-    
-    class Meta:
-        model = APIKey
-        fields = [
-            'id', 'name', 'key', 'user', 'is_active', 
-            'rate_limit_per_minute', 'rate_limit_per_hour', 'rate_limit_per_day',
-            'last_used', 'created_at', 'expires_at', 'is_expired', 'is_valid'
-        ]
-        read_only_fields = ('key', 'user', 'last_used', 'created_at')
 
 
 

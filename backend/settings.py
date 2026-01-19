@@ -63,24 +63,19 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "api.authentication.APIKeyAuthentication",  # API key authentication support
     ),
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    # Rate limiting using Redis cache backend
+    # Use Redis for throttling if needed
     "DEFAULT_THROTTLE_CLASSES": [
-        "api.throttling.APIKeyRateThrottle",  # API key rate limiting (checked first)
-        "api.throttling.APIKeyUserRateThrottle",  # User-based rate limiting for API keys
-        "rest_framework.throttling.AnonRateThrottle",  # Anonymous user rate limiting
-        "rest_framework.throttling.UserRateThrottle",  # JWT user rate limiting
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "100/hour",  # Anonymous users
-        "user": "1000/hour",  # Authenticated JWT users
+        "anon": "100/hour",
+        "user": "1000/hour",
     },
-    # Use Redis for throttling storage
-    "THROTTLE_CACHE": "default",  # Use Redis cache for throttling
 }
 
 # Application definition
@@ -241,6 +236,13 @@ CORS_PREFLIGHT_MAX_AGE = 86400
 PLAID_CLIENT_ID = os.getenv('PLAID_CLIENT_ID')
 PLAID_SECRET = os.getenv('PLAID_SECRET')
 PLAID_ENV = os.getenv('PLAID_ENV', 'sandbox')  # sandbox, development, production
+
+# Plaid Rate Limiting Configuration
+# These limits match Plaid's API rate limits:
+# - Sandbox/Development: 500 requests/hour
+# - Production: Varies by plan (typically 500-2000 requests/hour)
+PLAID_RATE_LIMIT_HOUR = int(os.getenv('PLAID_RATE_LIMIT_HOUR', '500'))  # Requests per hour
+PLAID_RATE_LIMIT_MINUTE = int(os.getenv('PLAID_RATE_LIMIT_MINUTE', '50'))  # Requests per minute (burst protection)
 
 # Email Configuration
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'

@@ -13,8 +13,10 @@ from plaid.model.transactions_get_request import TransactionsGetRequest
 from plaid.model.transactions_get_request_options import TransactionsGetRequestOptions
 from plaid.exceptions import ApiException as PlaidApiException
 from django.conf import settings
+from django.utils import timezone
 from datetime import datetime, timedelta
 import json
+from .plaid_rate_limiter import PlaidRateLimiter
 
 class PlaidService:
     def __init__(self):
@@ -30,10 +32,14 @@ class PlaidService:
         plaid_env = os.getenv('PLAID_ENV', 'sandbox')
         if plaid_env == 'production':
             host = plaid.Environment.Production
+            # Production rate limits are typically higher
+            requests_per_hour = int(os.getenv('PLAID_RATE_LIMIT_HOUR', '2000'))
         elif plaid_env == 'development':
             host = plaid.Environment.Development
+            requests_per_hour = int(os.getenv('PLAID_RATE_LIMIT_HOUR', '500'))
         else:
             host = plaid.Environment.Sandbox
+            requests_per_hour = int(os.getenv('PLAID_RATE_LIMIT_HOUR', '500'))
         
         self.client = plaid.ApiClient(
             plaid.Configuration(
@@ -45,9 +51,34 @@ class PlaidService:
             )
         )
         self.plaid_api = plaid_api.PlaidApi(self.client)
+        self.client_id = client_id
+        
+        # Initialize rate limiter
+        requests_per_minute = int(os.getenv('PLAID_RATE_LIMIT_MINUTE', '50'))
+        self.rate_limiter = PlaidRateLimiter(
+            requests_per_hour=requests_per_hour,
+            requests_per_minute=requests_per_minute
+        )
+    
+    def _check_rate_limit(self):
+        """Check rate limit before making Plaid API call"""
+        is_allowed, remaining, reset_time = self.rate_limiter.is_allowed(self.client_id)
+        if not is_allowed:
+            reset_datetime = timezone.datetime.fromtimestamp(reset_time, tz=timezone.utc)
+            seconds_until_reset = int(reset_time - timezone.now().timestamp())
+            raise Exception(
+                f"Plaid API rate limit exceeded. "
+                f"Limit: {self.rate_limiter.requests_per_hour} requests/hour. "
+                f"Reset in {seconds_until_reset} seconds."
+            )
+        return remaining
 
     def create_link_token(self, user_id):
         """Create a link token for Plaid Link"""
+        # Check rate limit before making API call
+        remaining = self._check_rate_limit()
+        print(f"PlaidService: Rate limit check passed. Remaining: {remaining} requests")
+        
         print(f"PlaidService: Creating link token for user {user_id}")
         print(f"PlaidService: Client ID: {os.getenv('PLAID_CLIENT_ID', 'NOT_SET')}")
         print(f"PlaidService: Secret: {os.getenv('PLAID_SECRET', 'NOT_SET')[:10]}..." if os.getenv('PLAID_SECRET') else "NOT_SET")
@@ -69,6 +100,10 @@ class PlaidService:
 
     def exchange_public_token(self, public_token):
         """Exchange public token for access token"""
+        # Check rate limit before making API call
+        remaining = self._check_rate_limit()
+        print(f"PlaidService: Rate limit check passed. Remaining: {remaining} requests")
+        
         request = ItemPublicTokenExchangeRequest(
             public_token=public_token
         )
@@ -78,6 +113,10 @@ class PlaidService:
 
     def get_accounts(self, access_token):
         """Get user's bank accounts"""
+        # Check rate limit before making API call
+        remaining = self._check_rate_limit()
+        print(f"PlaidService: Rate limit check passed. Remaining: {remaining} requests")
+        
         try:
             # Try to get accounts with balance first (requires balance product authorization)
             request = AccountsBalanceGetRequest(
@@ -88,6 +127,7 @@ class PlaidService:
         except Exception as e:
             print(f"Balance API failed, falling back to basic accounts API: {str(e)}")
             # Fallback to basic accounts API if balance product is not authorized
+            # Note: This counts as another API call, but we'll allow it for fallback
             request = AccountsGetRequest(
                 access_token=access_token
             )
@@ -96,6 +136,10 @@ class PlaidService:
 
     def sync_transactions(self, access_token, cursor=None):
         """Sync transactions from Plaid"""
+        # Check rate limit before making API call
+        remaining = self._check_rate_limit()
+        print(f"PlaidService: Rate limit check passed. Remaining: {remaining} requests")
+        
         if cursor:
             request = TransactionsSyncRequest(
                 access_token=access_token,
@@ -111,6 +155,10 @@ class PlaidService:
 
     def get_transactions(self, access_token, start_date, end_date, account_ids=None):
         """Get transactions for a date range"""
+        # Check rate limit before making API call
+        remaining = self._check_rate_limit()
+        print(f"PlaidService: Rate limit check passed. Remaining: {remaining} requests")
+        
         options = TransactionsGetRequestOptions()
         if account_ids:
             options.account_ids = account_ids
