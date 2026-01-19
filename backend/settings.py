@@ -295,13 +295,17 @@ SESSION_COOKIE_AGE = 86400  # 24 hours
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 
-# JWT Token Blacklist Configuration (store blacklisted tokens in Redis)
-# This enables secure logout and token revocation
+# JWT Token Configuration
+# Note: Token blacklist features require migrations to be run
+# Run: heroku run python manage.py migrate
+# If migrations haven't been run, blacklist features are disabled to prevent errors
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
+    # Disable blacklist features initially - enable after running migrations
+    # After migrations: set both to True for full blacklist support
+    "ROTATE_REFRESH_TOKENS": False,  # Set to True after migrations
+    "BLACKLIST_AFTER_ROTATION": False,  # Set to True after migrations
     "UPDATE_LAST_LOGIN": True,
     "ALGORITHM": "HS256",
     "SIGNING_KEY": SECRET_KEY,

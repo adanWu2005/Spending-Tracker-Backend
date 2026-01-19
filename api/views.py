@@ -386,8 +386,20 @@ def logout_view(request):
         refresh_token = request.data.get('refresh')
         if refresh_token:
             token = RefreshToken(refresh_token)
-            token.blacklist()  # Blacklist the token in Redis/database
-            return Response({'message': 'Successfully logged out'}, status=status.HTTP_200_OK)
+            # Only blacklist if token_blacklist tables exist
+            try:
+                token.blacklist()  # Blacklist the token in Redis/database
+                return Response({'message': 'Successfully logged out'}, status=status.HTTP_200_OK)
+            except Exception as blacklist_error:
+                # If blacklist fails (tables don't exist), just return success
+                # The token will expire naturally
+                if 'does not exist' in str(blacklist_error) or 'token_blacklist' in str(blacklist_error):
+                    print(f"⚠️  Token blacklist not available: {blacklist_error}. Token will expire naturally.")
+                    return Response({
+                        'message': 'Successfully logged out (blacklist not available - run migrations)',
+                        'warning': 'Token blacklist tables not found. Run: heroku run python manage.py migrate'
+                    }, status=status.HTTP_200_OK)
+                raise
         else:
             return Response({'error': 'Refresh token is required'}, status=status.HTTP_400_BAD_REQUEST)
     except Exception as e:

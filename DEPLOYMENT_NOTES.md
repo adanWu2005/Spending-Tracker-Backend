@@ -59,7 +59,24 @@ git push heroku main
 
 ### 6. Run Migrations on Heroku
 
+**IMPORTANT**: You MUST run migrations after deploying, especially for the token_blacklist app:
+
 ```bash
+heroku run python manage.py migrate
+```
+
+If you see errors about missing `token_blacklist_*` tables, this means migrations haven't been run. Run the command above.
+
+**Note**: The token_blacklist app requires database tables. If migrations fail, you may need to create migrations locally first:
+
+```bash
+# Locally
+python manage.py makemigrations
+git add .
+git commit -m "Add token blacklist migrations"
+git push heroku main
+
+# Then on Heroku
 heroku run python manage.py migrate
 ```
 
