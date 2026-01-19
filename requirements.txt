@@ -17,5 +17,6 @@ gunicorn
 psycopg2-binary
 whitenoise
 redis
+django-redis
 dj-database-url
 openai

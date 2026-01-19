@@ -7,8 +7,10 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 from django.utils import timezone
 from datetime import datetime, timedelta
+from django.core.cache import cache
 import json
 import os
 from openai import OpenAI
@@ -374,6 +376,21 @@ def delete_unverified_user(request):
         return Response({
             'error': 'Error deleting user'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout_view(request):
+    """Logout view that blacklists the refresh token"""
+    try:
+        refresh_token = request.data.get('refresh')
+        if refresh_token:
+            token = RefreshToken(refresh_token)
+            token.blacklist()  # Blacklist the token in Redis/database
+            return Response({'message': 'Successfully logged out'}, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Refresh token is required'}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({'error': 'Invalid token'}, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['POST', 'OPTIONS'])
 @permission_classes([AllowAny])

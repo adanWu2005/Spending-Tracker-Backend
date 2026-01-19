@@ -8,6 +8,7 @@ urlpatterns = [
     # Authentication
     path('register/', views.CreateUser.as_view(), name='register'),
     path('login/', views.login_view, name='login'),
+    path('logout/', views.logout_view, name='logout'),
     path('verify-email/', views.verify_email, name='verify-email'),
     path('resend-verification/', views.resend_verification, name='resend-verification'),
     path('check-user-status/', views.check_user_status, name='check-user-status'),

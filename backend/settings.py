@@ -67,11 +67,15 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-}
-
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    # Use Redis for throttling if needed
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/hour",
+        "user": "1000/hour",
+    },
 }
 
 # Application definition
@@ -86,6 +90,7 @@ INSTALLED_APPS = [
     "whitenoise.runserver_nostatic",
     "api",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",  # JWT token blacklist support
     "corsheaders",
     "django_celery_beat",
 ]
@@ -123,14 +128,29 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 
-# Database
+# Database Configuration
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
+# Supports Primary DB and Read Replica (for Heroku Postgres followers)
 
+# Primary database (write operations)
 DATABASES = {
     "default": dj_database_url.config(
-        default=os.environ.get('DATABASE_URL', 'sqlite:///' + str(BASE_DIR / 'db.sqlite3'))
+        default=os.environ.get('DATABASE_URL', 'sqlite:///' + str(BASE_DIR / 'db.sqlite3')),
+        conn_max_age=600,
+        conn_health_checks=True,
     )
 }
+
+# Read replica database (for read operations - Heroku Postgres follower)
+# Set DATABASE_REPLICA_URL in Heroku config vars to enable read replicas
+if os.environ.get('DATABASE_REPLICA_URL'):
+    DATABASES['replica'] = dj_database_url.config(
+        env='DATABASE_REPLICA_URL',
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
+    # Database router for read/write splitting
+    DATABASE_ROUTERS = ['backend.db_router.DatabaseRouter']
 
 
 # Password validation
@@ -226,24 +246,65 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
 
-# Celery Configuration
-CELERY_BROKER_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+# Redis Configuration for Distributed Architecture
+# Redis is used for: Sessions, JWT Token Blacklist, Caching, and Celery
+redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+
+# Handle SSL for Heroku Redis
+if redis_url.startswith('rediss://'):
+    # Add SSL certificate requirements for Heroku Redis
+    redis_url += '?ssl_cert_reqs=none'
+
+# Celery Configuration (uses Redis)
+CELERY_BROKER_URL = redis_url
+CELERY_RESULT_BACKEND = redis_url
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
-# Redis SSL Configuration for Heroku
-redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
-if redis_url.startswith('rediss://'):
-    # Add SSL certificate requirements for Heroku Redis
-    redis_url += '?ssl_cert_reqs=none'
-    CELERY_BROKER_URL = redis_url
-    CELERY_RESULT_BACKEND = redis_url
-else:
-    CELERY_BROKER_URL = redis_url
-    CELERY_RESULT_BACKEND = redis_url
+# Redis Cache Configuration (for user data caching)
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': redis_url,
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'SOCKET_CONNECT_TIMEOUT': 5,
+            'SOCKET_TIMEOUT': 5,
+            'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+            'IGNORE_EXCEPTIONS': True,  # Don't fail if Redis is unavailable
+        },
+        'KEY_PREFIX': 'finflow',
+        'TIMEOUT': 300,  # 5 minutes default timeout
+    }
+}
+
+# Session Configuration (store sessions in Redis instead of database)
+# This makes the app stateless and works with multiple dynos
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'default'
+SESSION_COOKIE_AGE = 86400  # 24 hours
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+
+# JWT Token Blacklist Configuration (store blacklisted tokens in Redis)
+# This enables secure logout and token revocation
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "UPDATE_LAST_LOGIN": True,
+    "ALGORITHM": "HS256",
+    "SIGNING_KEY": SECRET_KEY,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_HEADER_NAME": "HTTP_AUTHORIZATION",
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
+    "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+    "TOKEN_TYPE_CLAIM": "token_type",
+}
 
 # Django URL Configuration
 APPEND_SLASH = True
