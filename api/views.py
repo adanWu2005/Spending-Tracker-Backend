@@ -16,9 +16,9 @@ import os
 from openai import OpenAI
 from .serializer import (
     User_Serialzier, UserProfileSerializer, BankAccountSerializer,
-    SpendingCategorySerializer, TransactionSerializer
+    SpendingCategorySerializer, TransactionSerializer, APIKeySerializer
 )
-from .models import UserProfile, BankAccount, SpendingCategory, Transaction, VerificationCode
+from .models import UserProfile, BankAccount, SpendingCategory, Transaction, VerificationCode, APIKey
 from .plaid_service import PlaidService
 from .tasks import send_verification_email
 from .permissions import IsAdminUser

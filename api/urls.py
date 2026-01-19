@@ -51,4 +51,9 @@ urlpatterns = [
     
     # Security Attestations
     path('security/attestations/', views.security_attestations, name='security-attestations'),
+    
+    # API Key Management
+    path('api-keys/', views.APIKeyListCreateView.as_view(), name='api-key-list-create'),
+    path('api-keys/<int:pk>/', views.APIKeyDetailView.as_view(), name='api-key-detail'),
+    path('api-keys/<int:api_key_id>/stats/', views.api_key_stats, name='api-key-stats'),
 ]

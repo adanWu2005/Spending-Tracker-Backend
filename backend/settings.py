@@ -63,19 +63,24 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "api.authentication.APIKeyAuthentication",  # API key authentication support
     ),
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-    # Use Redis for throttling if needed
+    # Rate limiting using Redis cache backend
     "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
+        "api.throttling.APIKeyRateThrottle",  # API key rate limiting (checked first)
+        "api.throttling.APIKeyUserRateThrottle",  # User-based rate limiting for API keys
+        "rest_framework.throttling.AnonRateThrottle",  # Anonymous user rate limiting
+        "rest_framework.throttling.UserRateThrottle",  # JWT user rate limiting
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "anon": "100/hour",
-        "user": "1000/hour",
+        "anon": "100/hour",  # Anonymous users
+        "user": "1000/hour",  # Authenticated JWT users
     },
+    # Use Redis for throttling storage
+    "THROTTLE_CACHE": "default",  # Use Redis cache for throttling
 }
 
 # Application definition

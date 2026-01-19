@@ -131,3 +131,41 @@ class CentralizedIAM(models.Model):
     
     def __str__(self):
         return f"Centralized IAM - {'Active' if self.is_implemented else 'Inactive'}"
+
+
+class APIKey(models.Model):
+    """API Key model for API key-based authentication and rate limiting"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='api_keys')
+    name = models.CharField(max_length=100, help_text="A descriptive name for this API key")
+    key = models.CharField(max_length=64, unique=True, db_index=True, help_text="The API key value")
+    is_active = models.BooleanField(default=True, help_text="Whether this API key is active")
+    rate_limit_per_minute = models.IntegerField(default=60, help_text="Requests per minute allowed")
+    rate_limit_per_hour = models.IntegerField(default=1000, help_text="Requests per hour allowed")
+    rate_limit_per_day = models.IntegerField(default=10000, help_text="Requests per day allowed")
+    last_used = models.DateTimeField(null=True, blank=True, help_text="Last time this API key was used")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True, help_text="Optional expiration date")
+    
+    class Meta:
+        verbose_name = "API Key"
+        verbose_name_plural = "API Keys"
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.name} ({self.user.username})"
+    
+    def is_expired(self):
+        """Check if the API key has expired"""
+        if self.expires_at:
+            return timezone.now() > self.expires_at
+        return False
+    
+    def is_valid(self):
+        """Check if the API key is valid (active and not expired)"""
+        return self.is_active and not self.is_expired()
+    
+    @staticmethod
+    def generate_key():
+        """Generate a new API key"""
+        import secrets
+        return secrets.token_urlsafe(48)  # 64 characters when base64 encoded
